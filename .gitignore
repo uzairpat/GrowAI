@@ -1,0 +1,25 @@
+﻿# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Frontend dependencies and build files
+node_modules/
+.next/
+dist/
+build/
+out/
+
+# Backend dependencies
+venv/
+.venv/
+__pycache__/
+
+# Logs and system files
+*.log
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/

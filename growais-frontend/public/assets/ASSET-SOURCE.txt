@@ -1,0 +1,10 @@
+GrowAIs Student Goals page assets
+Source: user-provided Student_Goals(1).png
+
+Extracted assets:
+- goals-hero-illustration.png — top goals banner illustration
+- goal-headphones.png — current goal headphones illustration
+- goal-target.png — target illustration from hero area
+- goals-bottom-plant.png — bottom-left motivational plant
+
+These are crops from the supplied reference image and are intended for the GrowAIs goals-page recreation.
