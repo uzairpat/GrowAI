@@ -1,12 +1,17 @@
 const { Pool } = require('pg');
-require('dotenv').config();
+require('dotenv').config({ override: true });
 
 const pool = new Pool({
   host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT),
+  port: Number(process.env.DB_PORT || 5432),
   database: process.env.DB_NAME,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
+
+  // Use SSL for a hosted production database.
+  ...(process.env.NODE_ENV === 'production'
+    ? { ssl: { rejectUnauthorized: false } }
+    : {}),
 });
 
 pool.on('connect', () => {
@@ -14,7 +19,7 @@ pool.on('connect', () => {
 });
 
 pool.on('error', (err) => {
-  console.error('❌ PostgreSQL connection error:', err);
+  console.error('❌ PostgreSQL connection error:', err.message);
 });
 
 module.exports = pool;
