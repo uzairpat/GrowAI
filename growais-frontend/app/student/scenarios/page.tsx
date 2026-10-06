@@ -5,6 +5,14 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../../../lib/api";
 
+type User = {
+  id: number;
+  role: string;
+  username: string;
+  email: string | null;
+  full_name: string;
+};
+
 const scenarios = [
   {
     id: 1,
@@ -24,16 +32,53 @@ export default function ScenariosPage() {
   const [filter, setFilter] = useState("All Scenarios");
   const [scenarioCompleted, setScenarioCompleted] = useState(false);
   const [scenarioInProgress, setScenarioInProgress] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
-    const completed =
-      window.localStorage.getItem("growais_scenario_1_completed") === "true";
+    const loadUserAndScenarioStatus = async () => {
+      try {
+        const data = await apiFetch("/api/auth/me");
 
-    const inProgress =
-      window.localStorage.getItem("growais_scenario_1_in_progress") === "true";
+        if (data.user.role !== "student") {
+          window.location.href = "/login";
+          return;
+        }
 
-    setScenarioCompleted(completed);
-    setScenarioInProgress(inProgress);
+        setUser(data.user);
+
+        // Scenario status is stored per student in PostgreSQL.
+        // Do not use browser localStorage here, because it is shared
+        // by the current browser rather than being student-specific.
+        try {
+          const scenarioResult = await apiFetch(
+            "/api/student/scenarios/1/attempts/latest"
+          );
+
+          if (!scenarioResult.attempt) {
+            setScenarioCompleted(false);
+            setScenarioInProgress(false);
+            return;
+          }
+
+          if (scenarioResult.attempt.completed) {
+            setScenarioCompleted(true);
+            setScenarioInProgress(false);
+          } else {
+            setScenarioCompleted(false);
+            setScenarioInProgress(true);
+          }
+        } catch (error) {
+          console.error("Unable to load scenario progress:", error);
+          setScenarioCompleted(false);
+          setScenarioInProgress(false);
+        }
+      } catch {
+        window.location.href = "/login";
+      }
+    };
+
+    loadUserAndScenarioStatus();
   }, []);
 
   const currentScenarioStatus = scenarioCompleted
@@ -77,27 +122,83 @@ export default function ScenariosPage() {
 
         <div className="scenario-profile-area">
 
-          <button className="notification">
-            ♧
+          <button
+            type="button"
+            className="notification"
+            aria-label="Notifications"
+            title="Notifications"
+          >
+            🔔
             <span />
           </button>
 
           <div className="top-divider" />
 
-          <div className="profile">
+          <div className="profile-wrap">
 
-            <div className="avatar">
-              M
-            </div>
+            <button
+              type="button"
+              className="profile profile-toggle"
+              aria-expanded={profileMenuOpen}
+              aria-haspopup="menu"
+              onClick={() => setProfileMenuOpen((open) => !open)}
+            >
 
-            <div className="profile-text">
-              <strong>Hi, Mohamed</strong>
-              <small>Student</small>
-            </div>
+              <div className="avatar">
+                {(user?.full_name || "Student").charAt(0).toUpperCase()}
+              </div>
 
-            <span className="profile-arrow">
-              ⌄
-            </span>
+              <div className="profile-text">
+                <strong>
+                  Hi, {(user?.full_name || "Student").split(" ")[0]} 
+                </strong>
+                <small>Student</small>
+              </div>
+
+              <span className="profile-arrow">
+                ⌄
+              </span>
+
+            </button>
+
+            {profileMenuOpen && (
+              <div className="profile-dropdown" role="menu">
+
+                <a
+                  href="/student/profile"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Profile
+                </a>
+
+                <a
+                  href="/student/settings"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Settings
+                </a>
+
+                <a
+                  href="/student/help"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Help
+                </a>
+
+                <button
+                  type="button"
+                  className="profile-menu-item profile-menu-logout"
+                  role="menuitem"
+                  onClick={handleLogout}
+                >
+                  Log Out
+                </button>
+
+              </div>
+            )}
 
           </div>
 
@@ -196,30 +297,27 @@ export default function ScenariosPage() {
         <nav className="secondary-nav">
 
           <a href="#" className="nav-item">
-            <span className="nav-icon">♧</span>
+            <span className="nav-icon">🔔</span>
             <span>Notifications</span>
           </a>
 
-
-          <a href="#" className="nav-item">
+          <a href="/student/profile" className="nav-item">
             <span className="nav-icon">♙</span>
             <span>Profile</span>
           </a>
 
-
-          <a href="#" className="nav-item">
+          <a href="/student/settings" className="nav-item">
             <span className="nav-icon">⚙</span>
             <span>Settings</span>
           </a>
 
-
-          <a href="#" className="nav-item">
+          <a href="/student/help" className="nav-item">
             <span className="nav-icon">?</span>
             <span>Help</span>
           </a>
 
-
           <button
+            type="button"
             className="nav-item logout-button"
             onClick={handleLogout}
           >
@@ -291,7 +389,7 @@ export default function ScenariosPage() {
               <div className="scenario-hero">
 
                 <Image
-                  src="/assets/scenario-list-hero.png"
+                  src="/assets/scenario-hero.png"
                   alt="Student exploring financial scenarios"
                   fill
                   priority
@@ -1902,6 +2000,310 @@ export default function ScenariosPage() {
           }
 
         }
+
+
+        /* =====================================================
+           FINAL DASHBOARD-STYLE HEADER + SIDEBAR
+        ===================================================== */
+
+        .scenario-header {
+          height: 88px;
+          left: 280px;
+          padding: 0 32px;
+          z-index: 2000;
+        }
+
+        .scenario-search {
+          width: 515px;
+          height: 48px;
+          background: #f3f6fb;
+          border-radius: 12px;
+        }
+
+        .scenario-search input {
+          font-size: 16px;
+        }
+
+        .scenario-profile-area {
+          gap: 20px;
+        }
+
+        .notification {
+          color: #344879;
+          font-size: 28px;
+        }
+
+        .profile-wrap {
+          position: relative;
+        }
+
+        .profile-toggle {
+          border: 0;
+          background: transparent;
+          cursor: pointer;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          padding: 4px;
+          border-radius: 12px;
+        }
+
+        .profile-toggle:hover {
+          background: #f2faf7;
+        }
+
+        .profile-dropdown {
+          position: absolute;
+          top: calc(100% + 8px);
+          right: 0;
+          min-width: 205px;
+          padding: 8px;
+          background: #ffffff;
+          border: 1px solid #e1e8f0;
+          border-radius: 14px;
+          box-shadow: 0 12px 32px rgba(25, 45, 80, 0.16);
+          z-index: 3000;
+        }
+
+        .profile-menu-item {
+          display: block;
+          width: 100%;
+          padding: 11px 12px;
+          border: 0;
+          border-radius: 9px;
+          background: transparent;
+          color: #17215d;
+          font: inherit;
+          font-size: 14px;
+          text-align: left;
+          text-decoration: none;
+          cursor: pointer;
+        }
+
+        .profile-menu-item:hover {
+          background: #eef8f5;
+        }
+
+        .profile-menu-logout {
+          color: #c62828;
+        }
+
+        .sidebar {
+          width: 280px;
+          height: 100vh;
+          min-height: 0;
+          overflow-y: auto;
+          overflow-x: hidden;
+          overscroll-behavior: contain;
+          scrollbar-width: thin;
+          scrollbar-color: #cbd5e1 transparent;
+          z-index: 2100;
+        }
+
+        .sidebar::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 10px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .scenario-main {
+          padding-top: 112px;
+        }
+
+        @media (max-width: 1100px) {
+          .scenario-header {
+            left: 210px;
+            padding: 0 20px;
+          }
+
+          .sidebar {
+            width: 210px;
+          }
+
+          .scenario-main {
+            margin-left: 210px;
+            padding-left: 20px;
+            padding-right: 20px;
+          }
+
+          .scenario-search {
+            width: min(480px, 55vw);
+          }
+        }
+
+        @media (max-width: 800px) {
+          .sidebar {
+            width: 76px;
+          }
+
+          .logo-area {
+            padding: 12px 8px;
+            justify-content: center;
+          }
+
+          .logo {
+            width: 48px;
+            height: 48px;
+            object-fit: cover;
+            object-position: left;
+          }
+
+          .nav-item {
+            justify-content: center;
+            padding: 0;
+            gap: 0;
+          }
+
+          .nav-item span:last-child {
+            display: none;
+          }
+
+          .scenario-header {
+            left: 76px;
+          }
+
+          .scenario-main {
+            margin-left: 76px;
+          }
+        }
+
+        @media (max-width: 700px) {
+          .scenario-header {
+            left: 0;
+            right: 0;
+            width: 100%;
+            height: 64px;
+            padding: 0 12px;
+            gap: 8px;
+          }
+
+          .scenario-search {
+            flex: 1 1 auto;
+            width: auto;
+            max-width: none;
+            min-width: 0;
+            height: 42px;
+            padding: 0 11px;
+            gap: 7px;
+          }
+
+          .scenario-search input {
+            font-size: 12px;
+          }
+
+          .scenario-profile-area {
+            flex: 0 0 auto;
+            gap: 0;
+          }
+
+          .notification,
+          .top-divider,
+          .profile-text,
+          .profile-arrow {
+            display: none;
+          }
+
+          .profile-toggle {
+            padding: 2px;
+          }
+
+          .avatar {
+            width: 38px;
+            height: 38px;
+            font-size: 15px;
+          }
+
+          .profile-dropdown {
+            position: fixed;
+            top: 72px;
+            right: 10px;
+            min-width: 195px;
+          }
+
+          .sidebar {
+            left: 0;
+            right: 0;
+            top: auto;
+            bottom: 0;
+            width: 100%;
+            height: 66px;
+            min-height: 66px;
+            max-height: 66px;
+            overflow: hidden;
+            border-right: 0;
+            border-top: 1px solid #e4eaf2;
+            box-shadow: 0 -8px 25px rgba(34, 68, 100, 0.08);
+            display: block;
+            z-index: 3500;
+          }
+
+          .logo-area,
+          .sidebar-divider,
+          .secondary-nav,
+          .sidebar-message {
+            display: none;
+          }
+
+          .main-nav {
+            width: 100%;
+            height: 100%;
+            padding: 3px 2px;
+            display: flex;
+            align-items: stretch;
+            justify-content: space-between;
+            gap: 0;
+            overflow: hidden;
+          }
+
+          .main-nav .nav-item {
+            flex: 1 1 0;
+            width: auto;
+            min-width: 0;
+            height: 60px;
+            margin: 0;
+            padding: 3px 1px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            font-size: 8px;
+            line-height: 1.1;
+            text-align: center;
+          }
+
+          .main-nav .nav-item span:last-child {
+            display: block;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .main-nav .nav-icon {
+            width: auto;
+            min-width: 0;
+            font-size: 18px;
+            line-height: 20px;
+          }
+
+          .scenario-main {
+            margin-left: 0;
+            width: 100%;
+            max-width: 100%;
+            min-height: calc(100vh - 66px);
+            padding: 76px 12px 82px;
+          }
+        }
+
 
       `}</style>
 

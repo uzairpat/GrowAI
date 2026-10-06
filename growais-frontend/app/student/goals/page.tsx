@@ -5,6 +5,14 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../../../lib/api";
 
+type User = {
+  id: number;
+  role: string;
+  username: string;
+  email: string | null;
+  full_name: string;
+};
+
 type GoalType = "savings" | "completion";
 
 type Goal = {
@@ -54,6 +62,27 @@ export default function GoalsPage() {
   const [newGoalType, setNewGoalType] = useState<GoalType>("savings");
   const [newGoalTitle, setNewGoalTitle] = useState("");
   const [newGoalTarget, setNewGoalTarget] = useState("");
+  const [user, setUser] = useState<User | null>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const data = await apiFetch("/api/auth/me");
+
+        if (data.user.role !== "student") {
+          window.location.href = "/login";
+          return;
+        }
+
+        setUser(data.user);
+      } catch {
+        window.location.href = "/login";
+      }
+    };
+
+    loadUser();
+  }, []);
 
   useEffect(() => {
     const storedGoals = localStorage.getItem("growais_goals");
@@ -220,6 +249,9 @@ export default function GoalsPage() {
     setShowAddGoal(false);
   };
 
+  const studentName = user?.full_name || "Student";
+  const firstName = studentName.split(" ")[0] || "Student";
+
   const handleLogout = async () => {
     try {
       await apiFetch("/api/auth/logout", {
@@ -234,11 +266,10 @@ export default function GoalsPage() {
     <div className="goals-page">
 
       {/* =====================================================
-          HEADER
+          UPDATED STUDENT HEADER
       ===================================================== */}
 
       <header className="goals-header">
-
         <div className="goals-search">
           <span className="search-icon">⌕</span>
 
@@ -249,90 +280,120 @@ export default function GoalsPage() {
         </div>
 
         <div className="goals-profile-area">
-
-          <button className="notification">
-            ♧
+          <button
+            className="notification"
+            type="button"
+            aria-label="Notifications"
+            title="Notifications"
+          >
+            🔔
             <span />
           </button>
 
           <div className="top-divider" />
 
-          <div className="profile">
+          <div className="profile-area">
+            <button
+              className="profile profile-toggle"
+              type="button"
+              aria-expanded={profileMenuOpen}
+              aria-haspopup="menu"
+              aria-label="Open profile menu"
+              onClick={() => setProfileMenuOpen((open) => !open)}
+            >
+              <div className="avatar">
+                {studentName.charAt(0).toUpperCase()}
+              </div>
 
-            <div className="avatar">
-              M
-            </div>
+              <div className="profile-text">
+                <strong>Hi, {firstName}</strong>
+                <small>Student</small>
+              </div>
 
-            <div className="profile-text">
-              <strong>Hi, Mohamed</strong>
-              <small>Student</small>
-            </div>
+              <span className="profile-arrow" aria-hidden="true">
+                ⌄
+              </span>
+            </button>
 
-            <span className="profile-arrow">
-              ⌄
-            </span>
+            {profileMenuOpen && (
+              <div className="profile-dropdown" role="menu">
+                <div className="profile-dropdown-user">
+                  <strong>{studentName}</strong>
+                  <span>Student</span>
+                </div>
 
+                <a
+                  href="/student/profile"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Profile
+                </a>
+
+                <a
+                  href="/student/settings"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Settings
+                </a>
+
+                <a
+                  href="/student/help"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Help
+                </a>
+
+                <button
+                  type="button"
+                  className="profile-menu-item profile-menu-logout"
+                  role="menuitem"
+                  onClick={handleLogout}
+                >
+                  Log Out
+                </button>
+              </div>
+            )}
           </div>
-
         </div>
-
       </header>
 
 
       {/* =====================================================
-          SIDEBAR
+          UPDATED STUDENT SIDEBAR
       ===================================================== */}
 
       <aside className="sidebar">
-
         <div className="logo-area">
-
           <img
             src="/assets/growais-logo.png"
             alt="GrowAIs"
             className="logo"
           />
-
         </div>
 
-
         <nav className="main-nav">
-
-          <a
-            href="/student/dashboard"
-            className="nav-item"
-          >
+          <a href="/student/dashboard" className="nav-item">
             <span className="nav-icon">⌂</span>
             <span>Home</span>
           </a>
 
-
-          <a
-            href="/student/lessons"
-            className="nav-item"
-          >
+          <a href="/student/lessons" className="nav-item">
             <span className="nav-icon">▣</span>
             <span>My Learning</span>
           </a>
 
-
-          <a
-            href="/student/quizzes"
-            className="nav-item"
-          >
+          <a href="/student/quiz" className="nav-item">
             <span className="nav-icon">▤</span>
             <span>Quizzes</span>
           </a>
 
-
-          <a
-            href="/student/scenarios"
-            className="nav-item"
-          >
+          <a href="/student/scenarios" className="nav-item">
             <span className="nav-icon">🎮</span>
             <span>Scenarios</span>
           </a>
-
 
           <a
             href="/student/goals"
@@ -342,69 +403,51 @@ export default function GoalsPage() {
             <span>My Goals</span>
           </a>
 
-
-          <a
-            href="/student/progress"
-            className="nav-item"
-          >
+          <a href="/student/progress" className="nav-item">
             <span className="nav-icon">▥</span>
             <span>My Progress</span>
           </a>
 
-
-          <a
-            href="/student/ai-assistant"
-            className="nav-item"
-          >
+          <a href="/student/ai-assistant" className="nav-item">
             <span className="nav-icon">🤖</span>
             <span>AI Assistant</span>
           </a>
-
         </nav>
-
 
         <div className="sidebar-divider" />
 
-
         <nav className="secondary-nav">
-
           <a href="#" className="nav-item">
-            <span className="nav-icon">♧</span>
+            <span className="nav-icon">🔔</span>
             <span>Notifications</span>
           </a>
 
-
-          <a href="#" className="nav-item">
+          <a href="/student/profile" className="nav-item">
             <span className="nav-icon">♙</span>
             <span>Profile</span>
           </a>
 
-
-          <a href="#" className="nav-item">
+          <a href="/student/settings" className="nav-item">
             <span className="nav-icon">⚙</span>
             <span>Settings</span>
           </a>
 
-
-          <a href="#" className="nav-item">
+          <a href="/student/help" className="nav-item">
             <span className="nav-icon">?</span>
             <span>Help</span>
           </a>
 
-
           <button
+            type="button"
             className="nav-item logout-button"
             onClick={handleLogout}
           >
             <span className="nav-icon">↪</span>
             <span>Log Out</span>
           </button>
-
         </nav>
 
-
         <div className="sidebar-message">
-
           <img
             src="/assets/goals-bottom-plant.png"
             alt=""
@@ -417,9 +460,7 @@ export default function GoalsPage() {
             <br />
             tomorrow.
           </p>
-
         </div>
-
       </aside>
 
 
@@ -458,7 +499,7 @@ export default function GoalsPage() {
           <div className="hero-image">
 
             <Image
-              src="/assets/goals-hero-illustration.png"
+              src="/assets/goals-hero-illustration(2).png"
               alt="Student working towards a financial goal"
               fill
               priority
@@ -1149,7 +1190,7 @@ export default function GoalsPage() {
 
 
         /* =====================================================
-           HEADER
+           UPDATED STUDENT HEADER
         ===================================================== */
 
         .goals-header {
@@ -1157,140 +1198,207 @@ export default function GoalsPage() {
           top: 0;
           left: 280px;
           right: 0;
-          height: 72px;
+          height: 88px;
           background: #ffffff;
-          border-bottom: 1px solid #e5eaf2;
+          border-bottom: 1px solid #e7edf5;
           display: flex;
           align-items: center;
           justify-content: space-between;
           padding: 0 32px;
-          z-index: 100;
+          z-index: 2000;
         }
 
-
         .goals-search {
-          width: 560px;
-          height: 44px;
-          background: #f4f7fb;
+          width: 515px;
+          height: 48px;
+          background: #f3f6fb;
           border-radius: 12px;
           display: flex;
           align-items: center;
           gap: 12px;
-          padding: 0 18px;
+          padding: 0 16px;
         }
-
 
         .goals-search input {
           width: 100%;
           border: none;
           outline: none;
           background: transparent;
-          color: #344879;
-          font-size: 15px;
+          color: #18245d;
+          font-size: 16px;
         }
-
 
         .goals-search input::placeholder {
-          color: #7180a3;
+          color: #8290ad;
         }
-
 
         .search-icon {
-          font-size: 24px;
-          color: #344879;
+          font-size: 29px;
+          color: #5b6b91;
+          transform: rotate(-20deg);
+          flex-shrink: 0;
         }
-
 
         .goals-profile-area {
           display: flex;
           align-items: center;
-          gap: 22px;
+          gap: 20px;
         }
-
 
         .notification {
           position: relative;
-          width: 32px;
-          height: 36px;
+          width: 38px;
+          height: 42px;
           border: none;
           background: transparent;
-          color: #344879;
-          font-size: 27px;
+          color: #46577d;
+          font-size: 29px;
           cursor: pointer;
         }
 
-
         .notification span {
           position: absolute;
-          width: 8px;
-          height: 8px;
-          background: #ff4d4d;
+          width: 9px;
+          height: 9px;
+          background: #f0444a;
           border-radius: 50%;
           top: 2px;
           right: 0;
+          border: 2px solid #ffffff;
         }
-
 
         .top-divider {
           width: 1px;
           height: 42px;
-          background: #e3e8f0;
+          background: #e2e7ef;
         }
 
+        .profile-area {
+          position: relative;
+          display: flex;
+          align-items: center;
+        }
 
         .profile {
           display: flex;
           align-items: center;
           gap: 12px;
+          min-width: 175px;
         }
 
+        .profile-toggle {
+          border: 0;
+          background: transparent;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+          padding: 4px;
+          border-radius: 12px;
+        }
+
+        .profile-toggle:hover {
+          background: #f2faf7;
+        }
 
         .avatar {
           width: 44px;
           height: 44px;
           border-radius: 50%;
-          background: #05a779;
+          background: #0c9a72;
           color: white;
           display: flex;
           align-items: center;
           justify-content: center;
           font-weight: 700;
-          font-size: 18px;
+          font-size: 17px;
+          flex-shrink: 0;
         }
-
 
         .profile-text {
           display: flex;
           flex-direction: column;
-          gap: 2px;
+          gap: 3px;
         }
-
 
         .profile-text strong {
-          font-size: 15px;
-          color: #10165c;
+          font-size: 16px;
+          color: #11195b;
         }
-
 
         .profile-text small {
-          font-size: 13px;
-          color: #52638d;
+          font-size: 14px;
+          color: #59698e;
         }
 
-
         .profile-arrow {
-          margin-left: 18px;
+          margin-left: auto;
           font-size: 20px;
+        }
+
+        .profile-dropdown {
+          position: absolute;
+          top: calc(100% + 8px);
+          right: 0;
+          min-width: 205px;
+          padding: 8px;
+          background: #ffffff;
+          border: 1px solid #e1e8f0;
+          border-radius: 14px;
+          box-shadow: 0 12px 32px rgba(25, 45, 80, 0.16);
+          z-index: 5000;
+        }
+
+        .profile-dropdown-user {
+          padding: 10px 12px 12px;
+          margin-bottom: 4px;
+          border-bottom: 1px solid #edf1f5;
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .profile-dropdown-user strong {
+          color: #17215d;
+          font-size: 14px;
+        }
+
+        .profile-dropdown-user span {
+          color: #657397;
+          font-size: 12px;
+        }
+
+        .profile-menu-item {
+          display: block;
+          width: 100%;
+          padding: 11px 12px;
+          border: 0;
+          border-radius: 9px;
+          background: transparent;
+          color: #17215d;
+          font: inherit;
+          text-align: left;
+          text-decoration: none;
+          cursor: pointer;
+        }
+
+        .profile-menu-item:hover {
+          background: #eef8f5;
+        }
+
+        .profile-menu-logout {
+          color: #c62828;
         }
 
 
         /* =====================================================
-           SIDEBAR
+           UPDATED STUDENT SIDEBAR
         ===================================================== */
 
         .sidebar {
           width: 280px;
-          min-height: 100vh;
+          height: 100vh;
+          min-height: 0;
           border-right: 1px solid #e7edf5;
           background: #ffffff;
           position: fixed;
@@ -1299,9 +1407,34 @@ export default function GoalsPage() {
           bottom: 0;
           display: flex;
           flex-direction: column;
-          z-index: 20;
+          overflow-y: auto;
+          overflow-x: hidden;
+          overscroll-behavior: contain;
+          scrollbar-width: thin;
+          scrollbar-color: #cbd5e1 transparent;
+          z-index: 2100;
         }
 
+        .sidebar::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 10px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .logo-area,
+        .main-nav,
+        .sidebar-divider,
+        .secondary-nav,
+        .sidebar-message {
+          flex-shrink: 0;
+        }
 
         .logo-area {
           height: 88px;
@@ -1311,19 +1444,16 @@ export default function GoalsPage() {
           border-bottom: 1px solid #eef2f7;
         }
 
-
         .logo {
           width: 205px;
           height: auto;
           object-fit: contain;
         }
 
-
         .main-nav,
         .secondary-nav {
           padding: 18px 16px;
         }
-
 
         .nav-item {
           width: 100%;
@@ -1345,19 +1475,16 @@ export default function GoalsPage() {
           text-align: left;
         }
 
-
         .nav-item:hover {
           background: #f2faf7;
           color: #008f70;
         }
-
 
         .nav-item.active {
           background: #e4f7f1;
           color: #008f70;
           font-weight: 700;
         }
-
 
         .nav-icon {
           width: 28px;
@@ -1366,23 +1493,19 @@ export default function GoalsPage() {
           font-weight: 700;
         }
 
-
         .sidebar-divider {
           height: 1px;
           background: #e6ebf2;
           margin: 5px 24px;
         }
 
-
         .secondary-nav {
           padding-top: 12px;
         }
 
-
         .logout-button {
           font-family: inherit;
         }
-
 
         .sidebar-message {
           margin-top: auto;
@@ -1393,13 +1516,11 @@ export default function GoalsPage() {
           gap: 8px;
         }
 
-
         .sidebar-message img {
           width: 82px;
           height: 82px;
           object-fit: contain;
         }
-
 
         .sidebar-message p {
           margin: 0 0 8px;
@@ -1407,7 +1528,6 @@ export default function GoalsPage() {
           font-size: 14px;
           line-height: 1.45;
         }
-
 
         /* =====================================================
            MAIN
@@ -2376,6 +2496,134 @@ export default function GoalsPage() {
         ===================================================== */
 
         @media (max-width: 700px) {
+
+          .goals-header {
+            left: 0;
+            right: 0;
+            width: 100%;
+            height: 64px;
+            padding: 0 12px;
+            gap: 8px;
+          }
+
+          .goals-search {
+            flex: 1;
+            width: auto;
+            min-width: 0;
+            height: 42px;
+            padding: 0 10px;
+            gap: 7px;
+          }
+
+          .goals-search input {
+            min-width: 0;
+            font-size: 11px;
+          }
+
+          .search-icon {
+            font-size: 19px;
+          }
+
+          .goals-profile-area {
+            gap: 0;
+            flex-shrink: 0;
+          }
+
+          .notification,
+          .top-divider,
+          .profile-text,
+          .profile-arrow {
+            display: none;
+          }
+
+          .profile {
+            min-width: 0;
+            gap: 0;
+          }
+
+          .avatar {
+            width: 38px;
+            height: 38px;
+            font-size: 15px;
+          }
+
+          .profile-dropdown {
+            position: fixed;
+            top: 72px;
+            right: 10px;
+            min-width: 195px;
+          }
+
+          .sidebar {
+            position: fixed;
+            left: 0;
+            right: 0;
+            top: auto;
+            bottom: 0;
+            width: 100%;
+            height: 66px;
+            min-height: 66px;
+            max-height: 66px;
+            border: 0;
+            border-top: 1px solid #e4eaf2;
+            background: #ffffff;
+            box-shadow: 0 -8px 25px rgba(34, 68, 100, 0.08);
+            display: block;
+            overflow: hidden;
+            z-index: 3500;
+          }
+
+          .logo-area,
+          .sidebar-divider,
+          .secondary-nav,
+          .sidebar-message {
+            display: none;
+          }
+
+          .main-nav {
+            width: 100%;
+            height: 100%;
+            padding: 3px 2px;
+            display: flex;
+            align-items: stretch;
+            justify-content: space-between;
+            gap: 0;
+            overflow: hidden;
+          }
+
+          .main-nav .nav-item {
+            flex: 1 1 0;
+            width: auto;
+            min-width: 0;
+            height: 60px;
+            margin: 0;
+            padding: 3px 1px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            font-size: 8px;
+            line-height: 1.1;
+            text-align: center;
+          }
+
+          .main-nav .nav-item span:last-child {
+            display: block;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .main-nav .nav-icon {
+            width: auto;
+            min-width: 0;
+            font-size: 18px;
+            line-height: 20px;
+          }
+
 
           html,
           body {

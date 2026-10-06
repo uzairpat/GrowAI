@@ -28,6 +28,7 @@ export default function ProgressPage() {
   const [showAllActivity, setShowAllActivity] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   const [lessonCompleted, setLessonCompleted] = useState(false);
   const [quizCompleted, setQuizCompleted] = useState(false);
@@ -40,31 +41,6 @@ export default function ProgressPage() {
 
   useEffect(() => {
     const loadProgress = () => {
-      const lessonDone =
-        window.localStorage.getItem("growais_lesson_1_completed") === "true";
-      const quizDone =
-        window.localStorage.getItem("growais_quiz_1_completed") === "true";
-      const scenarioDone =
-        window.localStorage.getItem("growais_scenario_1_completed") === "true";
-
-      const savedQuizScore = Number(
-        window.localStorage.getItem("growais_quiz_1_score") || 0
-      );
-
-      const savedScenarioResult =
-        window.localStorage.getItem("growais_scenario_1_result");
-
-      let points = 0;
-
-      if (savedScenarioResult) {
-        try {
-          const result = JSON.parse(savedScenarioResult);
-          points = Number(result.points) || 0;
-        } catch {
-          points = 0;
-        }
-      }
-
       let activeGoalProgress = 0;
       let activeGoalTitle = "No Active Goal";
       const storedGoals = window.localStorage.getItem("growais_goals");
@@ -103,12 +79,10 @@ export default function ProgressPage() {
         }
       }
 
-      setLessonCompleted(lessonDone);
-      setQuizCompleted(quizDone);
-      setScenarioCompleted(scenarioDone);
-      setQuizScore(Number.isFinite(savedQuizScore) ? savedQuizScore : 0);
-      setScenarioPoints(points);
-      setScenarioBadgeEarned(scenarioDone);
+      // Scenario completion/score are loaded from PostgreSQL below.
+      setScenarioCompleted(false);
+      setScenarioPoints(0);
+      setScenarioBadgeEarned(false);
       setGoalProgress(activeGoalProgress);
       setGoalTitle(activeGoalTitle);
     };
@@ -123,6 +97,76 @@ export default function ProgressPage() {
         }
 
         setUser(data.user);
+
+        // Lesson progress is student-specific and comes from PostgreSQL.
+        try {
+          const lessonResult = await apiFetch(
+            "/api/student/lessons/2/progress"
+          );
+
+          setLessonCompleted(
+            lessonResult.progress?.status === "completed"
+          );
+        } catch (error) {
+          console.error("Unable to load lesson progress:", error);
+          setLessonCompleted(false);
+        }
+
+        // Quiz progress and score are student-specific and come from
+        // this student's latest PostgreSQL attempt for Quiz 2.
+        try {
+          const quizResult = await apiFetch(
+            "/api/student/quizzes/2/attempts/latest"
+          );
+
+          if (quizResult.attempt) {
+            setQuizCompleted(true);
+
+            const score = Number(quizResult.attempt.score);
+            setQuizScore(Number.isFinite(score) ? score : 0);
+          } else {
+            setQuizCompleted(false);
+            setQuizScore(0);
+          }
+        } catch (error) {
+          console.error("Unable to load quiz progress:", error);
+          setQuizCompleted(false);
+          setQuizScore(0);
+        }
+        // Scenario progress and score come from PostgreSQL for the
+        // logged-in student's latest Scenario 1 attempt.
+        try {
+          const scenarioResult = await apiFetch(
+            "/api/student/scenarios/1/attempts/latest"
+          );
+
+          if (scenarioResult.attempt) {
+            const completed = Boolean(
+              scenarioResult.attempt.completed
+            );
+            const score = Number(
+              scenarioResult.attempt.score
+            );
+
+            setScenarioCompleted(completed);
+            setScenarioPoints(
+              Number.isFinite(score) ? score : 0
+            );
+            setScenarioBadgeEarned(completed);
+          } else {
+            setScenarioCompleted(false);
+            setScenarioPoints(0);
+            setScenarioBadgeEarned(false);
+          }
+        } catch (error) {
+          console.error(
+            "Unable to load scenario progress:",
+            error
+          );
+          setScenarioCompleted(false);
+          setScenarioPoints(0);
+          setScenarioBadgeEarned(false);
+        }
       } catch {
         window.location.href = "/login";
       } finally {
@@ -219,7 +263,7 @@ export default function ProgressPage() {
   return (
     <div className="progress-page">
       {/* =====================================================
-          HEADER
+          UPDATED STUDENT HEADER
       ===================================================== */}
 
       <header className="progress-header">
@@ -233,30 +277,89 @@ export default function ProgressPage() {
         </div>
 
         <div className="progress-profile-area">
-          <button className="notification">
-            ♧
+          <button
+            className="notification"
+            type="button"
+            aria-label="Notifications"
+            title="Notifications"
+          >
+            🔔
             <span />
           </button>
 
           <div className="top-divider" />
 
-          <div className="profile">
-            <div className="avatar">
-              {studentName.charAt(0).toUpperCase()}
-            </div>
+          <div className="profile-area">
+            <button
+              className="profile profile-toggle"
+              type="button"
+              aria-expanded={profileMenuOpen}
+              aria-haspopup="menu"
+              aria-label="Open profile menu"
+              onClick={() => setProfileMenuOpen((open) => !open)}
+            >
+              <div className="avatar">
+                {studentName.charAt(0).toUpperCase()}
+              </div>
 
-            <div className="profile-text">
-              <strong>Hi, {studentName.split(" ")[0]}</strong>
-              <small>Student</small>
-            </div>
+              <div className="profile-text">
+                <strong>Hi, {studentName.split(" ")[0]}</strong>
+                <small>Student</small>
+              </div>
 
-            <span className="profile-arrow">⌄</span>
+              <span className="profile-arrow" aria-hidden="true">
+                ⌄
+              </span>
+            </button>
+
+            {profileMenuOpen && (
+              <div className="profile-dropdown" role="menu">
+                <div className="profile-dropdown-user">
+                  <strong>{studentName}</strong>
+                  <span>Student</span>
+                </div>
+
+                <a
+                  href="/student/profile"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Profile
+                </a>
+
+                <a
+                  href="/student/settings"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Settings
+                </a>
+
+                <a
+                  href="/student/help"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Help
+                </a>
+
+                <button
+                  type="button"
+                  className="profile-menu-item profile-menu-logout"
+                  role="menuitem"
+                  onClick={handleLogout}
+                >
+                  Log Out
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
 
+
       {/* =====================================================
-          SIDEBAR
+          UPDATED STUDENT SIDEBAR
       ===================================================== */}
 
       <aside className="sidebar">
@@ -302,10 +405,7 @@ export default function ProgressPage() {
             <span>My Progress</span>
           </a>
 
-          <a
-            href="/student/ai-assistant"
-            className="nav-item"
-          >
+          <a href="/student/ai-assistant" className="nav-item">
             <span className="nav-icon">🤖</span>
             <span>AI Assistant</span>
           </a>
@@ -315,26 +415,27 @@ export default function ProgressPage() {
 
         <nav className="secondary-nav">
           <a href="#" className="nav-item">
-            <span className="nav-icon">♧</span>
+            <span className="nav-icon">🔔</span>
             <span>Notifications</span>
           </a>
 
-          <a href="#" className="nav-item">
+          <a href="/student/profile" className="nav-item">
             <span className="nav-icon">♙</span>
             <span>Profile</span>
           </a>
 
-          <a href="#" className="nav-item">
+          <a href="/student/settings" className="nav-item">
             <span className="nav-icon">⚙</span>
             <span>Settings</span>
           </a>
 
-          <a href="#" className="nav-item">
+          <a href="/student/help" className="nav-item">
             <span className="nav-icon">?</span>
             <span>Help</span>
           </a>
 
           <button
+            type="button"
             className="nav-item logout-button"
             onClick={handleLogout}
           >
@@ -359,6 +460,7 @@ export default function ProgressPage() {
         </div>
       </aside>
 
+
       {/* =====================================================
           MAIN
       ===================================================== */}
@@ -369,7 +471,7 @@ export default function ProgressPage() {
 
         <section className="progress-hero">
           <Image
-            src="/assets/progress-hero-reference.png"
+            src="/assets/progress-hero-reference(1).png"
             alt="My Progress"
             fill
             priority
@@ -774,7 +876,7 @@ export default function ProgressPage() {
 
 
         /* =====================================================
-           HEADER
+           UPDATED STUDENT HEADER
         ===================================================== */
 
         .progress-header {
@@ -782,25 +884,25 @@ export default function ProgressPage() {
           top: 0;
           left: 280px;
           right: 0;
-          height: 72px;
+          height: 88px;
           background: #ffffff;
-          border-bottom: 1px solid #e5eaf2;
+          border-bottom: 1px solid #e7edf5;
           display: flex;
           align-items: center;
           justify-content: space-between;
           padding: 0 32px;
-          z-index: 100;
+          z-index: 2000;
         }
 
         .progress-search {
-          width: 560px;
-          height: 44px;
-          background: #f4f7fb;
+          width: 515px;
+          height: 48px;
+          background: #f3f6fb;
           border-radius: 12px;
           display: flex;
           align-items: center;
           gap: 12px;
-          padding: 0 18px;
+          padding: 0 16px;
         }
 
         .progress-search input {
@@ -808,100 +910,181 @@ export default function ProgressPage() {
           border: none;
           outline: none;
           background: transparent;
-          color: #344879;
-          font-size: 15px;
+          color: #18245d;
+          font-size: 16px;
         }
 
         .progress-search input::placeholder {
-          color: #7180a3;
+          color: #8290ad;
         }
 
         .search-icon {
-          font-size: 24px;
-          color: #344879;
+          font-size: 29px;
+          color: #5b6b91;
+          transform: rotate(-20deg);
+          flex-shrink: 0;
         }
 
         .progress-profile-area {
           display: flex;
           align-items: center;
-          gap: 22px;
+          gap: 20px;
         }
 
         .notification {
           position: relative;
-          width: 32px;
-          height: 36px;
+          width: 38px;
+          height: 42px;
           border: none;
           background: transparent;
-          color: #344879;
-          font-size: 27px;
+          color: #46577d;
+          font-size: 29px;
           cursor: pointer;
         }
 
         .notification span {
           position: absolute;
-          width: 8px;
-          height: 8px;
-          background: #ff4d4d;
+          width: 9px;
+          height: 9px;
+          background: #f0444a;
           border-radius: 50%;
           top: 2px;
           right: 0;
+          border: 2px solid #ffffff;
         }
 
         .top-divider {
           width: 1px;
           height: 42px;
-          background: #e3e8f0;
+          background: #e2e7ef;
+        }
+
+        .profile-area {
+          position: relative;
+          display: flex;
+          align-items: center;
         }
 
         .profile {
           display: flex;
           align-items: center;
           gap: 12px;
+          min-width: 175px;
+        }
+
+        .profile-toggle {
+          border: 0;
+          background: transparent;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+          padding: 4px;
+          border-radius: 12px;
+        }
+
+        .profile-toggle:hover {
+          background: #f2faf7;
         }
 
         .avatar {
           width: 44px;
           height: 44px;
           border-radius: 50%;
-          background: #05a779;
+          background: #0c9a72;
           color: white;
           display: flex;
           align-items: center;
           justify-content: center;
           font-weight: 700;
-          font-size: 18px;
+          font-size: 17px;
+          flex-shrink: 0;
         }
 
         .profile-text {
           display: flex;
           flex-direction: column;
-          gap: 2px;
+          gap: 3px;
         }
 
         .profile-text strong {
-          font-size: 15px;
-          color: #10165c;
+          font-size: 16px;
+          color: #11195b;
         }
 
         .profile-text small {
-          font-size: 13px;
-          color: #52638d;
+          font-size: 14px;
+          color: #59698e;
         }
 
         .profile-arrow {
-          margin-left: 18px;
+          margin-left: auto;
           font-size: 20px;
+        }
+
+        .profile-dropdown {
+          position: absolute;
+          top: calc(100% + 8px);
+          right: 0;
+          min-width: 205px;
+          padding: 8px;
+          background: #ffffff;
+          border: 1px solid #e1e8f0;
+          border-radius: 14px;
+          box-shadow: 0 12px 32px rgba(25, 45, 80, 0.16);
+          z-index: 5000;
+        }
+
+        .profile-dropdown-user {
+          padding: 10px 12px 12px;
+          margin-bottom: 4px;
+          border-bottom: 1px solid #edf1f5;
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .profile-dropdown-user strong {
+          color: #17215d;
+          font-size: 14px;
+        }
+
+        .profile-dropdown-user span {
+          color: #657397;
+          font-size: 12px;
+        }
+
+        .profile-menu-item {
+          display: block;
+          width: 100%;
+          padding: 11px 12px;
+          border: 0;
+          border-radius: 9px;
+          background: transparent;
+          color: #17215d;
+          font: inherit;
+          text-align: left;
+          text-decoration: none;
+          cursor: pointer;
+        }
+
+        .profile-menu-item:hover {
+          background: #eef8f5;
+        }
+
+        .profile-menu-logout {
+          color: #c62828;
         }
 
 
         /* =====================================================
-           SIDEBAR
+           UPDATED STUDENT SIDEBAR
         ===================================================== */
 
         .sidebar {
           width: 280px;
-          min-height: 100vh;
+          height: 100vh;
+          min-height: 0;
           border-right: 1px solid #e7edf5;
           background: #ffffff;
           position: fixed;
@@ -910,7 +1093,33 @@ export default function ProgressPage() {
           bottom: 0;
           display: flex;
           flex-direction: column;
-          z-index: 20;
+          overflow-y: auto;
+          overflow-x: hidden;
+          overscroll-behavior: contain;
+          scrollbar-width: thin;
+          scrollbar-color: #cbd5e1 transparent;
+          z-index: 2100;
+        }
+
+        .sidebar::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 10px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .logo-area,
+        .main-nav,
+        .sidebar-divider,
+        .secondary-nav,
+        .sidebar-message {
+          flex-shrink: 0;
         }
 
         .logo-area {
@@ -1005,7 +1214,6 @@ export default function ProgressPage() {
           font-size: 14px;
           line-height: 1.45;
         }
-
 
         /* =====================================================
            MAIN
@@ -1674,6 +1882,134 @@ export default function ProgressPage() {
 
         @media (max-width: 700px) {
 
+          .progress-header {
+            left: 0;
+            right: 0;
+            width: 100%;
+            height: 64px;
+            padding: 0 12px;
+            gap: 8px;
+          }
+
+          .progress-search {
+            flex: 1;
+            width: auto;
+            min-width: 0;
+            height: 42px;
+            padding: 0 10px;
+            gap: 7px;
+          }
+
+          .progress-search input {
+            min-width: 0;
+            font-size: 11px;
+          }
+
+          .search-icon {
+            font-size: 19px;
+          }
+
+          .progress-profile-area {
+            gap: 0;
+            flex-shrink: 0;
+          }
+
+          .notification,
+          .top-divider,
+          .profile-text,
+          .profile-arrow {
+            display: none;
+          }
+
+          .profile {
+            min-width: 0;
+            gap: 0;
+          }
+
+          .avatar {
+            width: 38px;
+            height: 38px;
+            font-size: 15px;
+          }
+
+          .profile-dropdown {
+            position: fixed;
+            top: 72px;
+            right: 10px;
+            min-width: 195px;
+          }
+
+          .sidebar {
+            position: fixed;
+            left: 0;
+            right: 0;
+            top: auto;
+            bottom: 0;
+            width: 100%;
+            height: 66px;
+            min-height: 66px;
+            max-height: 66px;
+            border: 0;
+            border-top: 1px solid #e4eaf2;
+            background: #ffffff;
+            box-shadow: 0 -8px 25px rgba(34, 68, 100, 0.08);
+            display: block;
+            overflow: hidden;
+            z-index: 3500;
+          }
+
+          .logo-area,
+          .sidebar-divider,
+          .secondary-nav,
+          .sidebar-message {
+            display: none;
+          }
+
+          .main-nav {
+            width: 100%;
+            height: 100%;
+            padding: 3px 2px;
+            display: flex;
+            align-items: stretch;
+            justify-content: space-between;
+            gap: 0;
+            overflow: hidden;
+          }
+
+          .main-nav .nav-item {
+            flex: 1 1 0;
+            width: auto;
+            min-width: 0;
+            height: 60px;
+            margin: 0;
+            padding: 3px 1px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            font-size: 8px;
+            line-height: 1.1;
+            text-align: center;
+          }
+
+          .main-nav .nav-item span:last-child {
+            display: block;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .main-nav .nav-icon {
+            width: auto;
+            min-width: 0;
+            font-size: 18px;
+            line-height: 20px;
+          }
+
+
           html,
           body {
             width: 100%;
@@ -1817,7 +2153,7 @@ export default function ProgressPage() {
             margin-left: 0;
             width: 100%;
             max-width: 100%;
-            padding: 76px 12px 24px;
+            padding: 76px 12px 82px;
           }
 
           .progress-hero {

@@ -42,7 +42,27 @@ export default function LessonsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('All Lessons');
   const [lessonCompleted, setLessonCompleted] = useState(false);
-
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const data = await apiFetch("/api/auth/me");
+  
+        if (data.user.role !== "student") {
+          window.location.href = "/login";
+          return;
+        }
+  
+        setUser(data.user);
+      } catch {
+        window.location.href = "/login";
+      }
+    };
+  
+    loadUser();
+  }, []);
+  
+  const studentName = user?.full_name || "Student";
   useEffect(() => {
     const savedCompletion =
       window.localStorage.getItem('growais_lesson_1_completed') === 'true';
@@ -162,7 +182,7 @@ export default function LessonsPage() {
         <nav className="secondary-nav">
 
           <a href="#" className="nav-item">
-            <span className="nav-icon">♧</span>
+            <span className="nav-icon">🔔</span>
             <span>Notifications</span>
           </a>
 
@@ -237,14 +257,20 @@ export default function LessonsPage() {
 
           <div className="profile-area">
 
-            <button className="notification">
-              ♧
+            <button className="notification" aria-label="Notifications" type="button">
+              🔔
               <span />
             </button>
 
             <div className="top-divider" />
 
-            <div className="profile">
+            <button
+              className="profile profile-toggle"
+              type="button"
+              aria-expanded={profileMenuOpen}
+              aria-label="Open profile menu"
+              onClick={() => setProfileMenuOpen((open) => !open)}
+            >
 
               <div className="avatar">
                 {firstName.charAt(0).toUpperCase()}
@@ -266,7 +292,28 @@ export default function LessonsPage() {
                 ⌄
               </span>
 
-            </div>
+            </button>
+
+            {profileMenuOpen && (
+              <div className="profile-dropdown">
+                <a href="/student/profile" className="profile-menu-item">Profile</a>
+                <a href="/student/settings" className="profile-menu-item">Settings</a>
+                <a href="/student/help" className="profile-menu-item">Help</a>
+                <button
+                  type="button"
+                  className="profile-menu-item profile-menu-logout"
+                  onClick={async () => {
+                    try {
+                      await apiFetch('/api/auth/logout', { method: 'POST' });
+                    } finally {
+                      window.location.href = '/login';
+                    }
+                  }}
+                >
+                  Log Out
+                </button>
+              </div>
+            )}
 
           </div>
 
@@ -604,7 +651,13 @@ export default function LessonsPage() {
 
         .sidebar {
           width: 280px;
-          min-height: 100vh;
+          height: 100vh;
+          min-height: 0;
+          overflow-y: auto;
+          overflow-x: hidden;
+          overscroll-behavior: contain;
+          scrollbar-width: thin;
+          scrollbar-color: #cbd5e1 transparent;
           border-right: 1px solid #e7edf5;
           background: #ffffff;
           position: fixed;
@@ -617,6 +670,7 @@ export default function LessonsPage() {
         }
 
         .logo-area {
+          flex-shrink: 0;
           height: 88px;
           display: flex;
           align-items: center;
@@ -632,6 +686,7 @@ export default function LessonsPage() {
 
         .main-nav,
         .secondary-nav {
+          flex-shrink: 0;
           padding: 18px 16px;
         }
 
@@ -674,6 +729,7 @@ export default function LessonsPage() {
         }
 
         .sidebar-divider {
+          flex-shrink: 0;
           height: 1px;
           background: #e6ebf2;
           margin: 5px 24px;
@@ -688,6 +744,7 @@ export default function LessonsPage() {
         }
 
         .sidebar-message {
+          flex-shrink: 0;
           margin-top: auto;
           min-height: 105px;
           display: flex;
@@ -778,23 +835,29 @@ export default function LessonsPage() {
         }
 
         .profile-area {
+          position: relative;
           display: flex;
           align-items: center;
-
           gap: 20px;
         }
 
         .notification {
           position: relative;
-
+          width: 42px;
+          height: 42px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
           border: none;
-          background: none;
-
-          font-size: 28px;
-
+          border-radius: 10px;
+          background: transparent;
+          font-size: 22px;
           color: #4a5b81;
-
           cursor: pointer;
+        }
+
+        .notification:hover {
+          background: #f2faf7;
         }
 
         .notification span {
@@ -823,11 +886,52 @@ export default function LessonsPage() {
         .profile {
           display: flex;
           align-items: center;
-
           gap: 12px;
-
           min-width: 175px;
         }
+
+        .profile-toggle {
+          border: 0;
+          background: transparent;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+          padding: 4px;
+          border-radius: 12px;
+        }
+
+        .profile-toggle:hover { background: #f2faf7; }
+
+        .profile-dropdown {
+          position: absolute;
+          right: 18px;
+          top: calc(100% - 4px);
+          min-width: 180px;
+          padding: 8px;
+          background: #fff;
+          border: 1px solid #e1e8f0;
+          border-radius: 14px;
+          box-shadow: 0 12px 32px rgba(25, 45, 80, .16);
+          z-index: 1200;
+        }
+
+        .profile-menu-item {
+          display: block;
+          width: 100%;
+          padding: 11px 12px;
+          border: 0;
+          border-radius: 9px;
+          background: transparent;
+          color: #17215d;
+          font: inherit;
+          text-align: left;
+          text-decoration: none;
+          cursor: pointer;
+        }
+
+        .profile-menu-item:hover { background: #eef8f5; }
+        .profile-menu-logout { color: #c62828; }
 
         .avatar {
           width: 44px;
@@ -895,13 +999,13 @@ export default function LessonsPage() {
 
           overflow: hidden;
 
-          border-radius: 0 0 18px 18px;
-
+          margin-bottom: 16px;
+          border-radius: 18px;
           background: linear-gradient(
             110deg,
-            #f5fbff 0%,
-            #ffffff 55%,
-            #eafbf5 100%
+            #e8f8f2 0%,
+            #f0fbf8 55%,
+            #e3f5ee 100%
           );
         }
 
@@ -1511,6 +1615,7 @@ export default function LessonsPage() {
     box-shadow: 0 -8px 25px rgba(34, 68, 100, 0.08);
 
     display: block;
+    overflow: hidden;
 
     z-index: 1000;
   }
@@ -1635,7 +1740,36 @@ export default function LessonsPage() {
   }
 
   .profile-area {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 4px;
+  }
+
+  .profile-area .notification,
+  .profile-area .top-divider {
     display: none;
+  }
+
+  .profile-toggle {
+    min-width: 0 !important;
+    gap: 6px !important;
+    padding: 2px !important;
+  }
+
+  .profile-toggle .avatar {
+    width: 38px;
+    height: 38px;
+    flex: 0 0 38px;
+  }
+
+  .profile-toggle .profile-text { display: none; }
+  .profile-toggle .arrow { margin-left: 0; font-size: 16px; }
+
+  .profile-dropdown {
+    position: fixed;
+    top: 58px;
+    right: 10px;
+    min-width: 190px;
   }
 
   /* =========================================
@@ -1652,7 +1786,7 @@ export default function LessonsPage() {
 
   .hero {
     height: 300px;
-
+    margin-bottom: 14px;
     border-radius: 16px;
   }
 

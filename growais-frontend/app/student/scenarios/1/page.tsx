@@ -2,14 +2,47 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch } from "../../../../lib/api";
+
+type User = {
+  id: number;
+  role: string;
+  username: string;
+  email: string | null;
+  full_name: string;
+};
 
 export default function ScenarioDetailPage() {
   const [currentQuestion, setCurrentQuestion] = useState(1);
   const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [user, setUser] = useState<User | null>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const data = await apiFetch("/api/auth/me");
+
+        if (data.user.role !== "student") {
+          window.location.href = "/login";
+          return;
+        }
+
+        setUser(data.user);
+      } catch {
+        window.location.href = "/login";
+      }
+    };
+
+    loadUser();
+  }, []);
 
   const selectedChoice = answers[currentQuestion] ?? null;
+
+  const studentName = user?.full_name || "Student";
+  const firstName = studentName.split(" ")[0] || "Student";
 
   const setSelectedChoice = (choice: string) => {
     setAnswers((previous) => ({
@@ -17,10 +50,6 @@ export default function ScenarioDetailPage() {
       [currentQuestion]: choice,
     }));
 
-    window.localStorage.setItem(
-      "growais_scenario_1_in_progress",
-      "true"
-    );
   };
 
   const handleLogout = async () => {
@@ -33,17 +62,66 @@ export default function ScenarioDetailPage() {
     }
   };
 
+  const handleSubmit = async () => {
+    if (!answers[1] || !answers[2] || isSubmitting) {
+      return;
+    }
+
+    const choiceIdMap: Record<number, Record<string, number>> = {
+      1: { A: 1, B: 2, C: 3 },
+      2: { A: 4, B: 5, C: 6 },
+    };
+
+    const choice1 = choiceIdMap[1][answers[1]];
+    const choice2 = choiceIdMap[2][answers[2]];
+
+    if (!choice1 || !choice2) {
+      alert("Unable to determine your selected choices. Please try again.");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      await apiFetch("/api/student/scenarios/1/attempts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          answers: [
+            {
+              question_number: 1,
+              choice_id: choice1,
+              selected_option: answers[1],
+            },
+            {
+              question_number: 2,
+              choice_id: choice2,
+              selected_option: answers[2],
+            },
+          ],
+        }),
+      });
+
+      window.location.href = "/student/scenarios/1/result";
+    } catch (error) {
+      console.error("Unable to save scenario attempt:", error);
+      alert("Unable to save your scenario result. Please try again.");
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <div className="scenario-page">
 
       {/* =====================================================
-          HEADER
+          UPDATED STUDENT HEADER
       ===================================================== */}
 
-      <header className="scenario-header">
-
-        <div className="scenario-search">
-          <span className="search-icon">⌕</span>
+      <header className="topbar">
+        <div className="search-box">
+          <span>⌕</span>
 
           <input
             type="text"
@@ -51,82 +129,116 @@ export default function ScenarioDetailPage() {
           />
         </div>
 
-        <div className="scenario-profile-area">
-
-          <button className="notification">
-            ♧
-            <span />
+        <div className="topbar-right">
+          <button
+            className="notification-button"
+            type="button"
+            aria-label="Notifications"
+            title="Notifications"
+          >
+            🔔
+            <span className="notification-dot" />
           </button>
 
-          <div className="top-divider" />
+          <div className="topbar-divider" />
 
-          <div className="profile">
+          <div className="profile-area">
+            <button
+              className="profile profile-toggle"
+              type="button"
+              aria-expanded={profileMenuOpen}
+              aria-haspopup="menu"
+              aria-label="Open profile menu"
+              onClick={() => setProfileMenuOpen((open) => !open)}
+            >
+              <div className="avatar">
+                {studentName.charAt(0).toUpperCase()}
+              </div>
 
-            <div className="avatar">
-              M
-            </div>
+              <div className="profile-text">
+                <strong>Hi, {firstName}</strong>
+                <small>Student</small>
+              </div>
 
-            <div className="profile-text">
-              <strong>Hi, Mohamed</strong>
-              <small>Student</small>
-            </div>
+              <span className="arrow" aria-hidden="true">
+                ⌄
+              </span>
+            </button>
 
-            <span className="profile-arrow">
-              ⌄
-            </span>
+            {profileMenuOpen && (
+              <div className="profile-dropdown" role="menu">
+                <div className="profile-dropdown-user">
+                  <strong>{studentName}</strong>
+                  <span>Student</span>
+                </div>
 
+                <a
+                  href="/student/profile"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Profile
+                </a>
+
+                <a
+                  href="/student/settings"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Settings
+                </a>
+
+                <a
+                  href="/student/help"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Help
+                </a>
+
+                <button
+                  type="button"
+                  className="profile-menu-item profile-menu-logout"
+                  role="menuitem"
+                  onClick={handleLogout}
+                >
+                  Log Out
+                </button>
+              </div>
+            )}
           </div>
-
         </div>
-
       </header>
 
 
       {/* =====================================================
-          SIDEBAR
+          UPDATED STUDENT SIDEBAR
       ===================================================== */}
 
       <aside className="sidebar">
-
         <div className="logo-area">
-
           <img
             src="/assets/growais-logo.png"
             alt="GrowAIs"
             className="logo"
           />
-
         </div>
 
-
         <nav className="main-nav">
-
-          <a
-            href="/student/dashboard"
-            className="nav-item"
-          >
+          <a href="/student/dashboard" className="nav-item">
             <span className="nav-icon">⌂</span>
             <span>Home</span>
           </a>
 
-
-          <a
-            href="/student/lessons"
-            className="nav-item"
-          >
+          <a href="/student/lessons" className="nav-item">
             <span className="nav-icon">▣</span>
             <span>My Learning</span>
           </a>
 
-
-          <a
-            href="/student/quiz"
-            className="nav-item"
-          >
+          <a href="/student/quiz" className="nav-item">
             <span className="nav-icon">▤</span>
             <span>Quizzes</span>
           </a>
-
 
           <a
             href="/student/scenarios"
@@ -136,78 +248,65 @@ export default function ScenarioDetailPage() {
             <span>Scenarios</span>
           </a>
 
-
-          <a
-            href="/student/goals"
-            className="nav-item"
-          >
+          <a href="/student/goals" className="nav-item">
             <span className="nav-icon">◎</span>
             <span>My Goals</span>
           </a>
 
-
-          <a
-            href="/student/progress"
-            className="nav-item"
-          >
+          <a href="/student/progress" className="nav-item">
             <span className="nav-icon">▥</span>
             <span>My Progress</span>
           </a>
 
-
-          <a
-            href="/student/ai-assistant"
-            className="nav-item"
-          >
+          <a href="/student/ai-assistant" className="nav-item">
             <span className="nav-icon">🤖</span>
             <span>AI Assistant</span>
           </a>
-
         </nav>
-
 
         <div className="sidebar-divider" />
 
-
         <nav className="secondary-nav">
-
           <a href="#" className="nav-item">
-            <span className="nav-icon">♧</span>
+            <span className="nav-icon">🔔</span>
             <span>Notifications</span>
           </a>
 
-
-          <a href="#" className="nav-item">
+          <a
+            href="/student/profile"
+            className="nav-item"
+          >
             <span className="nav-icon">♙</span>
             <span>Profile</span>
           </a>
 
-
-          <a href="#" className="nav-item">
+          <a
+            href="/student/settings"
+            className="nav-item"
+          >
             <span className="nav-icon">⚙</span>
             <span>Settings</span>
           </a>
 
-
-          <a href="#" className="nav-item">
+          <a
+            href="/student/help"
+            className="nav-item"
+          >
             <span className="nav-icon">?</span>
             <span>Help</span>
           </a>
 
-
           <button
             className="nav-item logout-button"
+            type="button"
             onClick={handleLogout}
           >
             <span className="nav-icon">↪</span>
             <span>Log Out</span>
           </button>
-
         </nav>
 
-
         <div className="sidebar-message">
-
           <img
             src="/assets/dashboard-plant.png"
             alt=""
@@ -220,9 +319,7 @@ export default function ScenarioDetailPage() {
             <br />
             tomorrow.
           </p>
-
         </div>
-
       </aside>
 
 
@@ -270,7 +367,7 @@ export default function ScenarioDetailPage() {
                 </h1>
 
                 <p>
-                  Scenario 1 of 3
+                  Scenario 1
                 </p>
 
                 <span className="difficulty">
@@ -286,7 +383,7 @@ export default function ScenarioDetailPage() {
             <div className="scenario-hero">
 
 <Image
-  src="/assets/scenario-detail-hero.png"
+  src="/assets/scenario-hero-weekend-spending.png"
   alt="Student thinking about spending choices"
   fill
   priority
@@ -391,7 +488,7 @@ export default function ScenarioDetailPage() {
                       <div className="choice-image">
 
                         <Image
-                          src="/assets/scenario-choice-concert.png"
+                          src="/assets/scenario-choice-concert1.png"
                           alt="Concert"
                           fill
                           sizes="300px"
@@ -437,7 +534,7 @@ export default function ScenarioDetailPage() {
                       <div className="choice-image">
 
                         <Image
-                          src="/assets/scenario-choice-piggybank.png"
+                          src="/assets/scenario-choice-piggybank2.png"
                           alt="Saving money"
                           fill
                           sizes="300px"
@@ -483,7 +580,7 @@ export default function ScenarioDetailPage() {
                       <div className="choice-image">
 
                         <Image
-                          src="/assets/scenario-choice-shopping.png"
+                          src="/assets/scenario-choice-shopping3.png"
                           alt="Shopping"
                           fill
                           sizes="300px"
@@ -534,7 +631,7 @@ export default function ScenarioDetailPage() {
                       <div className="choice-image">
 
                         <Image
-                          src="/assets/scenario-choice-concert.png"
+                          src="/assets/scenario-weekend-spending.png"
                           alt="Dinner"
                           fill
                           sizes="300px"
@@ -579,7 +676,7 @@ export default function ScenarioDetailPage() {
                       <div className="choice-image">
 
                         <Image
-                          src="/assets/scenario-choice-piggybank.png"
+                          src="/assets/scenario-save-money.png"
                           alt="Save money"
                           fill
                           sizes="300px"
@@ -624,7 +721,7 @@ export default function ScenarioDetailPage() {
                       <div className="choice-image">
 
                         <Image
-                          src="/assets/scenario-choice-shopping.png"
+                          src="/assets/scenario-credit-card.png"
                           alt="Shopping"
                           fill
                           sizes="300px"
@@ -696,32 +793,19 @@ export default function ScenarioDetailPage() {
 
                 ) : (
 
-<Link
-  href={
-    answers[1] && answers[2]
-      ? `/student/scenarios/1/result?q1=${answers[1]}&q2=${answers[2]}`
-      : "#"
-  }
+<button
+  type="button"
   className={`continue-button ${
-    !(answers[1] && answers[2])
+    !(answers[1] && answers[2]) || isSubmitting
       ? "disabled"
       : ""
   }`}
-  onClick={(event) => {
-    if (!(answers[1] && answers[2])) {
-      event.preventDefault();
-      return;
-    }
-
-    window.localStorage.setItem(
-      "growais_scenario_1_answers",
-      JSON.stringify(answers)
-    );
-  }}
+  disabled={!(answers[1] && answers[2]) || isSubmitting}
+  onClick={handleSubmit}
 >
-  Submit
-  <span>✓</span>
-</Link>
+  {isSubmitting ? "Saving..." : "Submit"}
+  <span>{isSubmitting ? "…" : "✓"}</span>
+</button>
                 )}
 
               </div>
@@ -897,148 +981,215 @@ export default function ScenarioDetailPage() {
 
 
         /* =====================================================
-           HEADER
+           UPDATED STUDENT HEADER
         ===================================================== */
 
-        .scenario-header {
+        .topbar {
           position: fixed;
           top: 0;
           left: 280px;
           right: 0;
-          height: 72px;
-          background: #ffffff;
-          border-bottom: 1px solid #e5eaf2;
+          height: 88px;
+          border-bottom: 1px solid #e7edf5;
           display: flex;
           align-items: center;
           justify-content: space-between;
           padding: 0 32px;
-          z-index: 100;
+          background: #ffffff;
+          z-index: 2000;
         }
 
-
-        .scenario-search {
-          width: 560px;
-          height: 44px;
-          background: #f4f7fb;
+        .search-box {
+          width: 515px;
+          height: 48px;
           border-radius: 12px;
+          background: #f3f6fb;
           display: flex;
           align-items: center;
+          padding: 0 16px;
           gap: 12px;
-          padding: 0 18px;
         }
 
+        .search-box span {
+          font-size: 29px;
+          color: #5b6b91;
+          transform: rotate(-20deg);
+          flex-shrink: 0;
+        }
 
-        .scenario-search input {
-          width: 100%;
+        .search-box input {
           border: none;
           outline: none;
           background: transparent;
-          color: #344879;
-          font-size: 15px;
+          width: 100%;
+          font-size: 16px;
+          color: #18245d;
         }
 
-
-        .scenario-search input::placeholder {
-          color: #7180a3;
+        .search-box input::placeholder {
+          color: #8290ad;
         }
 
-
-        .search-icon {
-          font-size: 24px;
-          color: #344879;
-        }
-
-
-        .scenario-profile-area {
+        .topbar-right {
           display: flex;
           align-items: center;
-          gap: 22px;
+          gap: 20px;
         }
 
-
-        .notification {
+        .notification-button {
           position: relative;
-          width: 32px;
-          height: 36px;
           border: none;
-          background: transparent;
-          color: #344879;
-          font-size: 27px;
+          background: none;
+          font-size: 29px;
+          color: #46577d;
           cursor: pointer;
+          width: 38px;
+          height: 42px;
         }
 
-
-        .notification span {
+        .notification-dot {
           position: absolute;
-          width: 8px;
-          height: 8px;
-          background: #ff4d4d;
+          width: 9px;
+          height: 9px;
+          background: #f0444a;
           border-radius: 50%;
           top: 2px;
           right: 0;
+          border: 2px solid white;
         }
 
-
-        .top-divider {
+        .topbar-divider {
           width: 1px;
           height: 42px;
-          background: #e3e8f0;
+          background: #e2e7ef;
         }
 
+        .profile-area {
+          position: relative;
+          display: flex;
+          align-items: center;
+          gap: 20px;
+        }
 
         .profile {
           display: flex;
           align-items: center;
           gap: 12px;
+          min-width: 175px;
         }
 
+        .profile-toggle {
+          border: 0;
+          background: transparent;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+          padding: 4px;
+          border-radius: 12px;
+        }
+
+        .profile-toggle:hover {
+          background: #f2faf7;
+        }
 
         .avatar {
           width: 44px;
           height: 44px;
           border-radius: 50%;
-          background: #05a779;
+          background: #0c9a72;
           color: white;
           display: flex;
-          align-items: center;
           justify-content: center;
+          align-items: center;
+          font-size: 17px;
           font-weight: 700;
-          font-size: 18px;
+          flex-shrink: 0;
         }
-
 
         .profile-text {
           display: flex;
           flex-direction: column;
-          gap: 2px;
+          gap: 3px;
         }
-
 
         .profile-text strong {
-          font-size: 15px;
-          color: #10165c;
+          font-size: 16px;
+          color: #11195b;
         }
-
 
         .profile-text small {
-          font-size: 13px;
-          color: #52638d;
+          color: #59698e;
+          font-size: 14px;
         }
 
-
-        .profile-arrow {
-          margin-left: 18px;
+        .arrow {
+          margin-left: auto;
           font-size: 20px;
         }
 
+        .profile-dropdown {
+          position: absolute;
+          right: 0;
+          top: calc(100% + 8px);
+          min-width: 205px;
+          padding: 8px;
+          background: #ffffff;
+          border: 1px solid #e1e8f0;
+          border-radius: 14px;
+          box-shadow: 0 12px 32px rgba(25, 45, 80, 0.16);
+          z-index: 5000;
+        }
+
+        .profile-dropdown-user {
+          padding: 10px 12px 12px;
+          margin-bottom: 4px;
+          border-bottom: 1px solid #edf1f5;
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .profile-dropdown-user strong {
+          color: #17215d;
+          font-size: 14px;
+        }
+
+        .profile-dropdown-user span {
+          color: #657397;
+          font-size: 12px;
+        }
+
+        .profile-menu-item {
+          display: block;
+          width: 100%;
+          padding: 11px 12px;
+          border: 0;
+          border-radius: 9px;
+          background: transparent;
+          color: #17215d;
+          font: inherit;
+          text-align: left;
+          text-decoration: none;
+          cursor: pointer;
+        }
+
+        .profile-menu-item:hover {
+          background: #eef8f5;
+        }
+
+        .profile-menu-logout {
+          color: #c62828;
+        }
 
         /* =====================================================
-           SIDEBAR
+           UPDATED STUDENT SIDEBAR
         ===================================================== */
 
         .sidebar {
           width: 280px;
-          min-height: 100vh;
+          height: 100vh;
+          min-height: 0;
           border-right: 1px solid #e7edf5;
           background: #ffffff;
           position: fixed;
@@ -1047,9 +1198,34 @@ export default function ScenarioDetailPage() {
           bottom: 0;
           display: flex;
           flex-direction: column;
-          z-index: 20;
+          overflow-y: auto;
+          overflow-x: hidden;
+          overscroll-behavior: contain;
+          scrollbar-width: thin;
+          scrollbar-color: #cbd5e1 transparent;
+          z-index: 2100;
         }
 
+        .sidebar::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 10px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .logo-area,
+        .main-nav,
+        .sidebar-divider,
+        .secondary-nav,
+        .sidebar-message {
+          flex-shrink: 0;
+        }
 
         .logo-area {
           height: 88px;
@@ -1059,19 +1235,16 @@ export default function ScenarioDetailPage() {
           border-bottom: 1px solid #eef2f7;
         }
 
-
         .logo {
           width: 205px;
           height: auto;
           object-fit: contain;
         }
 
-
         .main-nav,
         .secondary-nav {
           padding: 18px 16px;
         }
-
 
         .nav-item {
           width: 100%;
@@ -1093,19 +1266,16 @@ export default function ScenarioDetailPage() {
           text-align: left;
         }
 
-
         .nav-item:hover {
           background: #f2faf7;
           color: #008f70;
         }
-
 
         .nav-item.active {
           background: #e4f7f1;
           color: #008f70;
           font-weight: 700;
         }
-
 
         .nav-icon {
           width: 28px;
@@ -1114,23 +1284,19 @@ export default function ScenarioDetailPage() {
           font-weight: 700;
         }
 
-
         .sidebar-divider {
           height: 1px;
           background: #e6ebf2;
           margin: 5px 24px;
         }
 
-
         .secondary-nav {
           padding-top: 12px;
         }
 
-
         .logout-button {
           font-family: inherit;
         }
-
 
         .sidebar-message {
           margin-top: auto;
@@ -1141,13 +1307,11 @@ export default function ScenarioDetailPage() {
           gap: 8px;
         }
 
-
         .sidebar-message img {
           width: 82px;
           height: 82px;
           object-fit: contain;
         }
-
 
         .sidebar-message p {
           margin: 0 0 8px;
@@ -1155,7 +1319,6 @@ export default function ScenarioDetailPage() {
           font-size: 14px;
           line-height: 1.45;
         }
-
 
         /* =====================================================
            MAIN
@@ -1189,8 +1352,9 @@ export default function ScenarioDetailPage() {
         .scenario-heading-row {
           display: grid;
           grid-template-columns: 360px minmax(0, 1fr);
-          gap: 25px;
+          gap: 14px;
           align-items: center;
+          justify-content: start;
         }
 
 
@@ -1203,8 +1367,8 @@ export default function ScenarioDetailPage() {
 
         .scenario-icon {
           position: relative;
-          width: 116px;
-          height: 116px;
+          width: 132px;
+          height: 92px;
           flex-shrink: 0;
           border-radius: 14px;
           overflow: hidden;
@@ -1213,7 +1377,8 @@ export default function ScenarioDetailPage() {
 
 
         .scenario-icon-image {
-          object-fit: cover;
+          object-fit: contain;
+          object-position: center;
         }
 
 
@@ -1256,15 +1421,19 @@ export default function ScenarioDetailPage() {
         .scenario-hero {
           position: relative;
           width: 100%;
-          height: 172px;
+          max-width: none;
+          aspect-ratio: 1791 / 382;
+          height: auto;
+          min-height: 0;
           border-radius: 16px;
           overflow: hidden;
           background: #e2f8ef;
+          justify-self: start;
         }
 
 
         .scenario-hero-image {
-          object-fit: cover;
+          object-fit: contain;
           object-position: center;
         }
 
@@ -1296,7 +1465,7 @@ export default function ScenarioDetailPage() {
   gap: 20px;
   align-items: start;
   width: 100%;
-  margin-top: 12px;
+  margin-top: 0;
 }
 
 .scenario-right {
@@ -1479,14 +1648,17 @@ export default function ScenarioDetailPage() {
         .choice-image {
           position: relative;
           width: 100%;
-          height: 116px;
+          aspect-ratio: 700 / 310;
+          height: auto;
+          min-height: 0;
           border-radius: 11px;
           overflow: hidden;
         }
 
 
         .choice-image-img {
-          object-fit: cover;
+          object-fit: contain;
+          object-position: center;
         }
 
 
@@ -1598,17 +1770,62 @@ export default function ScenarioDetailPage() {
         ===================================================== */
 
         .scenario-right {
+          position: relative;
+          z-index: 5;
           display: flex;
           flex-direction: column;
-          gap: 16px;
+          align-items: stretch;
+          gap: 18px;
+          align-self: start;
+          min-width: 0;
+          height: fit-content;
         }
 
 
         .right-card {
+          position: relative;
+          z-index: 1;
+          width: 100%;
+          flex: 0 0 auto;
           border: 1px solid #e0e7f0;
           border-radius: 15px;
           padding: 20px;
           background: #ffffff;
+          margin: 0;
+          transform: none;
+        }
+
+
+        .progress-card,
+        .hint-card,
+        .remember-card,
+        .ai-card {
+          position: relative;
+          z-index: 1;
+          margin: 0;
+          transform: none;
+        }
+
+
+        .progress-card {
+          min-height: 116px;
+          align-self: stretch;
+          margin-top: -24px;
+          margin-left: 0;
+          margin-right: 0;
+          left: 0;
+          right: auto;
+        }
+
+
+        .hint-card,
+        .remember-card,
+        .ai-card {
+          align-self: stretch;
+          margin-left: 0;
+          margin-right: 0;
+          left: 0;
+          right: auto;
         }
 
 
@@ -1768,6 +1985,12 @@ export default function ScenarioDetailPage() {
 
           .scenario-heading-row {
             grid-template-columns: 300px minmax(0, 1fr);
+            gap: 18px;
+            justify-content: start;
+          }
+
+          .scenario-hero {
+            max-width: 100%;
           }
 
 
@@ -1797,11 +2020,15 @@ export default function ScenarioDetailPage() {
 
           .scenario-heading-row {
             grid-template-columns: 1fr;
+            gap: 14px;
           }
 
 
           .scenario-hero {
-            height: 150px;
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+            aspect-ratio: 1791 / 382;
           }
 
 
@@ -1813,6 +2040,10 @@ export default function ScenarioDetailPage() {
           .scenario-right {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
+          }
+
+          .progress-card {
+            margin-top: 0;
           }
 
         }
@@ -1839,22 +2070,18 @@ export default function ScenarioDetailPage() {
           }
 
 
-          /* HEADER */
+          /* UPDATED HEADER */
 
-          .scenario-header {
-            position: fixed;
+          .topbar {
             left: 0;
             right: 0;
-            top: 0;
             width: 100%;
             height: 64px;
             padding: 0 12px;
             gap: 8px;
-            z-index: 2000;
           }
 
-
-          .scenario-search {
+          .search-box {
             flex: 1;
             width: auto;
             min-width: 0;
@@ -1863,41 +2090,42 @@ export default function ScenarioDetailPage() {
             gap: 7px;
           }
 
-
-          .scenario-search input {
+          .search-box input {
             min-width: 0;
             font-size: 11px;
           }
 
-
-          .search-icon {
+          .search-box span {
             font-size: 19px;
           }
 
-
-          .scenario-profile-area {
-            display: flex;
-            flex-shrink: 0;
-          }
-
-
-          .notification,
-          .top-divider,
-          .profile-text,
-          .profile-arrow {
-            display: none;
-          }
-
-
-          .profile {
+          .topbar-right {
             gap: 0;
           }
 
+          .notification-button,
+          .topbar-divider,
+          .profile-text,
+          .arrow {
+            display: none;
+          }
+
+          .profile {
+            gap: 0;
+            min-width: 0;
+          }
 
           .avatar {
             width: 38px;
             height: 38px;
             font-size: 15px;
+          }
+
+          .profile-dropdown {
+            position: fixed;
+            top: 72px;
+            right: 10px;
+            min-width: 195px;
           }
 
 
@@ -1987,6 +2215,12 @@ export default function ScenarioDetailPage() {
           }
 
 
+          .scenario-icon {
+            width: 118px;
+            height: 82px;
+          }
+
+
           /* TOP */
 
           .scenario-top {
@@ -2028,14 +2262,16 @@ export default function ScenarioDetailPage() {
   position: relative;
   z-index: 1;
   width: 100%;
-  height: 172px;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1791 / 382;
   border-radius: 16px;
   overflow: hidden;
   background: #e2f8ef;
 }
 
 .scenario-hero-image {
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
 }
 
@@ -2191,10 +2427,15 @@ export default function ScenarioDetailPage() {
           /* RIGHT SIDE */
 
           .scenario-right {
+            position: relative;
+            z-index: 5;
             width: 100%;
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            align-items: stretch;
+            gap: 12px;
+            align-self: stretch;
+            height: fit-content;
           }
 
 
@@ -2249,7 +2490,14 @@ export default function ScenarioDetailPage() {
 
 
           .scenario-hero {
-            height: 118px;
+            height: auto;
+            aspect-ratio: 1791 / 382;
+          }
+
+
+          .scenario-icon {
+            width: 108px;
+            height: 76px;
           }
 
 
@@ -2269,7 +2517,8 @@ export default function ScenarioDetailPage() {
 
 
           .choice-image {
-            height: 112px;
+            height: auto;
+            aspect-ratio: 700 / 310;
           }
 
 

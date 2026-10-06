@@ -1,11 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiFetch } from '../../lib/api';
 
 export default function Page() {
-  const [role, setRole] = useState('student');
+  const [role, setRole] = useState<'student' | 'teacher'>('student');
 
   const [schoolCode, setSchoolCode] = useState('');
   const [login, setLogin] = useState('');
@@ -15,6 +15,17 @@ export default function Page() {
 
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedRole = params.get('role');
+
+    if (requestedRole === 'teacher') {
+      setRole('teacher');
+    } else if (requestedRole === 'student') {
+      setRole('student');
+    }
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,23 +44,52 @@ export default function Page() {
         method: 'POST',
         body: JSON.stringify({
           login,
-          password
-        })
+          password,
+        }),
       });
 
-      // Redirect based on the role returned by the backend.
-      // The frontend does NOT decide the user's actual role.
-      if (data.user.role === 'student') {
-        window.location.href = '/student/dashboard';
-      } else if (data.user.role === 'teacher') {
-        window.location.href = '/teacher/dashboard';
-      } else if (data.user.role === 'school_admin') {
-        window.location.href = '/admin/dashboard';
-      } else if (data.user.role === 'platform_admin') {
-        window.location.href = '/admin/dashboard';
-      } else {
-        setError('Your account role is not supported.');
+      const authenticatedRole = data?.user?.role;
+
+      if (!authenticatedRole) {
+        throw new Error('Login succeeded, but your account role was not returned.');
       }
+
+      // Keep the selected login tab consistent with the real account role.
+      if (
+        (role === 'student' && authenticatedRole !== 'student') ||
+        (role === 'teacher' &&
+          authenticatedRole !== 'teacher' &&
+          authenticatedRole !== 'school_admin')
+      ) {
+        await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+
+        setError(
+          role === 'teacher'
+            ? 'This account is not a teacher account. Select Student to continue.'
+            : 'This account is not a student account. Select Teacher / School Admin to continue.'
+        );
+        return;
+      }
+
+      if (authenticatedRole === 'student') {
+        window.location.href = '/student/dashboard';
+        return;
+      }
+
+      if (
+        authenticatedRole === 'teacher' ||
+        authenticatedRole === 'school_admin'
+      ) {
+        window.location.href = '/teacher/dashboard';
+        return;
+      }
+
+      if (authenticatedRole === 'platform_admin') {
+        window.location.href = '/admin/dashboard';
+        return;
+      }
+
+      throw new Error('Your account role is not supported.');
     } catch (error) {
       setError(
         error instanceof Error
@@ -154,12 +194,16 @@ export default function Page() {
 
             {/* SCHOOL / CLASS CODE */}
             <label>
-              School / Class Code
+              {role === 'teacher' ? 'School Code' : 'School / Class Code'}
 
               <input
                 value={schoolCode}
                 onChange={(e) => setSchoolCode(e.target.value)}
-                placeholder="Enter your school or class code"
+                placeholder={
+                  role === 'teacher'
+                    ? 'Enter your school code'
+                    : 'Enter your school or class code'
+                }
               />
             </label>
 

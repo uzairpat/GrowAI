@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { apiFetch } from '../../lib/api';
 
 export default function Page() {
-  const [role, setRole] = useState('student');
+  const [role, setRole] = useState<'student' | 'teacher'>('student');
 
   const [schoolCode, setSchoolCode] = useState('');
   const [fullName, setFullName] = useState('');
@@ -36,19 +36,22 @@ export default function Page() {
     setLoading(true);
 
     try {
-      await apiFetch('/api/auth/register', {
+      const data = await apiFetch('/api/auth/register', {
         method: 'POST',
         body: JSON.stringify({
           role,
           fullName,
           username,
           email: email || null,
-          password
-        })
+          password,
+        }),
       });
 
-      // Registration successful → go to login
-      window.location.href = '/login';
+      const registeredRole = data?.user?.role || role;
+
+      // Return to login with the same role selected.
+      // The login page will still verify the real role returned by the backend.
+      window.location.href = `/login?role=${encodeURIComponent(registeredRole)}`;
     } catch (error) {
       setError(
         error instanceof Error
@@ -68,13 +71,25 @@ export default function Page() {
           <p className="eyebrow">JOIN GROWAIS</p>
 
           <h1>
-            Start Your
-            <br />
-            <span>Financial Learning Journey!</span>
+            {role === 'teacher' ? (
+              <>
+                Support Better
+                <br />
+                <span>Financial Learning!</span>
+              </>
+            ) : (
+              <>
+                Start Your
+                <br />
+                <span>Financial Learning Journey!</span>
+              </>
+            )}
           </h1>
 
           <p className="lead">
-            Create an account to join your school and start learning with GrowAIs.
+            {role === 'teacher'
+              ? 'Create a teacher account to support and track student learning with GrowAIs.'
+              : 'Create a student account to join your school and start learning with GrowAIs.'}
           </p>
         </div>
       </div>
@@ -112,11 +127,15 @@ export default function Page() {
 
           {/* School / Class Code */}
           <label>
-            School / Class Code
+            {role === 'teacher' ? 'School Code' : 'School / Class Code'}
 
             <input
               type="text"
-              placeholder="Enter your school or class code"
+              placeholder={
+                role === 'teacher'
+                  ? 'Enter your school code'
+                  : 'Enter your school or class code'
+              }
               value={schoolCode}
               onChange={(e) => setSchoolCode(e.target.value)}
             />

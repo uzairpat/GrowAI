@@ -5,6 +5,14 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../../../lib/api";
 
+type User = {
+  id: number;
+  role: string;
+  username: string;
+  email: string | null;
+  full_name: string;
+};
+
 type Message = {
   id: number;
   sender: "ai" | "user";
@@ -116,9 +124,11 @@ function getAIResponse(question: string) {
 }
 
 export default function AIAssistantPage() {
-    const [studentName, setStudentName] = useState("Student");
+  const [studentName, setStudentName] = useState("Student");
+  const [user, setUser] = useState<User | null>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
-    const [messages, setMessages] = useState<Message[]>([
+  const [messages, setMessages] = useState<Message[]>([
     {
       id: 1,
       sender: "ai",
@@ -155,13 +165,16 @@ export default function AIAssistantPage() {
     const loadStudent = async () => {
       try {
         const data = await apiFetch("/api/auth/me");
-        if (data?.user?.name) {
-          setStudentName(data.user.name);
-        } else if (data?.name) {
-          setStudentName(data.name);
+
+        if (data?.user?.role !== "student") {
+          window.location.href = "/login";
+          return;
         }
+
+        setUser(data.user);
+        setStudentName(data.user.full_name || "Student");
       } catch {
-        // Keep the default name if the user information cannot be loaded.
+        window.location.href = "/login";
       }
     };
 
@@ -173,6 +186,8 @@ export default function AIAssistantPage() {
       localStorage.setItem("growais_ai_messages", JSON.stringify(messages));
     }
   }, [messages]);
+
+  const firstName = studentName.split(" ")[0] || "Student";
 
   const sendMessage = (question?: string) => {
     const messageText = (question ?? input).trim();
@@ -246,132 +261,86 @@ export default function AIAssistantPage() {
         ===================================================== */}
 
       <aside className="sidebar">
-
         <div className="logo-area">
-
           <img
             src="/assets/growais-logo.png"
             alt="GrowAIs"
             className="logo"
           />
-
         </div>
 
-
         <nav className="main-nav">
-
-          <a
-            href="/student/dashboard"
-            className="nav-item"
-          >
+          <a href="/student/dashboard" className="nav-item">
             <span className="nav-icon">⌂</span>
             <span>Home</span>
           </a>
 
-
-          <a
-            href="/student/lessons"
-            className="nav-item"
-          >
+          <a href="/student/lessons" className="nav-item">
             <span className="nav-icon">▣</span>
             <span>My Learning</span>
           </a>
 
-
-          <a
-            href="/student/quizzes"
-            className="nav-item"
-          >
+          <a href="/student/quiz" className="nav-item">
             <span className="nav-icon">▤</span>
             <span>Quizzes</span>
           </a>
 
-
-          <a
-            href="/student/scenarios"
-            className="nav-item"
-          >
+          <a href="/student/scenarios" className="nav-item">
             <span className="nav-icon">🎮</span>
             <span>Scenarios</span>
           </a>
 
-
-          <a
-            href="/student/goals"
-            className="nav-item"
-          >
+          <a href="/student/goals" className="nav-item">
             <span className="nav-icon">◎</span>
             <span>My Goals</span>
           </a>
 
-
-          <a
-            href="/student/progress"
-            className="nav-item"
-          >
+          <a href="/student/progress" className="nav-item">
             <span className="nav-icon">▥</span>
             <span>My Progress</span>
           </a>
 
-
-          <a
-            href="/student/ai-assistant"
-            className="nav-item active"
-          >
+          <a href="/student/ai-assistant" className="nav-item active">
             <span className="nav-icon">🤖</span>
             <span>AI Assistant</span>
           </a>
-
         </nav>
-
 
         <div className="sidebar-divider" />
 
-
         <nav className="secondary-nav">
-
           <a href="#" className="nav-item">
-            <span className="nav-icon">♧</span>
+            <span className="nav-icon">🔔</span>
             <span>Notifications</span>
           </a>
 
-
-          <a href="#" className="nav-item">
+          <a href="/student/profile" className="nav-item">
             <span className="nav-icon">♙</span>
             <span>Profile</span>
           </a>
 
-
-          <a href="#" className="nav-item">
+          <a href="/student/settings" className="nav-item">
             <span className="nav-icon">⚙</span>
             <span>Settings</span>
           </a>
 
-
-          <a href="#" className="nav-item">
+          <a href="/student/help" className="nav-item">
             <span className="nav-icon">?</span>
             <span>Help</span>
           </a>
 
-
           <button
+            type="button"
             className="nav-item logout-button"
             onClick={handleLogout}
           >
             <span className="nav-icon">↪</span>
             <span>Log Out</span>
           </button>
-
         </nav>
 
-
         <div className="sidebar-message">
-
-          <img
-            src="/assets/goals-bottom-plant.png"
-            alt=""
-          />
-
+          <img src="/assets/goals-bottom-plant.png" alt="" />
           <p>
             Small steps
             <br />
@@ -379,61 +348,99 @@ export default function AIAssistantPage() {
             <br />
             tomorrow.
           </p>
-
         </div>
-
       </aside>
 
-        {/* =====================================================
-            MAIN AREA
-        ===================================================== */}
-
-        <main className="main-content">
-
-          {/* ===================================================
-              HEADER
-          =================================================== */}
-
-      <header className="goals-header">
-
-        <div className="goals-search">
-          <span className="search-icon">⌕</span>
-
-          <input
-            type="text"
-            placeholder="Search lessons, quizzes, or topics..."
-          />
-        </div>
-
-        <div className="goals-profile-area">
-
-          <button className="notification">
-            ♧
-            <span />
-          </button>
-
-          <div className="top-divider" />
-
-          <div className="profile">
-
-            <div className="avatar">
-              M
-            </div>
-
-            <div className="profile-text">
-              <strong>Hi, {studentName}</strong>
-              <small>Student</small>
-            </div>
-
-            <span className="profile-arrow">
-              ⌄
-            </span>
-
+      <main className="main-content">
+        <header className="goals-header">
+          <div className="goals-search">
+            <span className="search-icon">⌕</span>
+            <input
+              type="text"
+              placeholder="Search lessons, quizzes, or topics..."
+            />
           </div>
 
-        </div>
+          <div className="goals-profile-area">
+            <button
+              className="notification"
+              type="button"
+              aria-label="Notifications"
+              title="Notifications"
+            >
+              🔔
+              <span />
+            </button>
 
-      </header>
+            <div className="top-divider" />
+
+            <div className="profile-area">
+              <button
+                className="profile profile-toggle"
+                type="button"
+                aria-expanded={profileMenuOpen}
+                aria-haspopup="menu"
+                aria-label="Open profile menu"
+                onClick={() => setProfileMenuOpen((open) => !open)}
+              >
+                <div className="avatar">
+                  {studentName.charAt(0).toUpperCase()}
+                </div>
+
+                <div className="profile-text">
+                  <strong>Hi, {firstName}</strong>
+                  <small>Student</small>
+                </div>
+
+                <span className="profile-arrow" aria-hidden="true">
+                  ⌄
+                </span>
+              </button>
+
+              {profileMenuOpen && (
+                <div className="profile-dropdown" role="menu">
+                  <div className="profile-dropdown-user">
+                    <strong>{studentName}</strong>
+                    <span>{user?.role === "student" ? "Student" : "User"}</span>
+                  </div>
+
+                  <a
+                    href="/student/profile"
+                    className="profile-menu-item"
+                    role="menuitem"
+                  >
+                    Profile
+                  </a>
+
+                  <a
+                    href="/student/settings"
+                    className="profile-menu-item"
+                    role="menuitem"
+                  >
+                    Settings
+                  </a>
+
+                  <a
+                    href="/student/help"
+                    className="profile-menu-item"
+                    role="menuitem"
+                  >
+                    Help
+                  </a>
+
+                  <button
+                    type="button"
+                    className="profile-menu-item profile-menu-logout"
+                    role="menuitem"
+                    onClick={handleLogout}
+                  >
+                    Log Out
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
 
           {/* ===================================================
               PAGE CONTENT
@@ -828,20 +835,19 @@ export default function AIAssistantPage() {
           top: 0;
           left: 280px;
           right: 0;
-          height: 72px;
+          height: 88px;
           background: #ffffff;
           border-bottom: 1px solid #e5eaf2;
           display: flex;
           align-items: center;
           justify-content: space-between;
           padding: 0 32px;
-          z-index: 100;
+          z-index: 1000;
         }
 
-
         .goals-search {
-          width: 560px;
-          height: 44px;
+          width: 515px;
+          height: 48px;
           background: #f4f7fb;
           border-radius: 12px;
           display: flex;
@@ -849,7 +855,6 @@ export default function AIAssistantPage() {
           gap: 12px;
           padding: 0 18px;
         }
-
 
         .goals-search input {
           width: 100%;
@@ -860,24 +865,21 @@ export default function AIAssistantPage() {
           font-size: 15px;
         }
 
-
         .goals-search input::placeholder {
           color: #7180a3;
         }
 
-
         .search-icon {
           font-size: 24px;
           color: #344879;
+          flex-shrink: 0;
         }
-
 
         .goals-profile-area {
           display: flex;
           align-items: center;
           gap: 22px;
         }
-
 
         .notification {
           position: relative;
@@ -888,8 +890,8 @@ export default function AIAssistantPage() {
           color: #344879;
           font-size: 27px;
           cursor: pointer;
+          padding: 0;
         }
-
 
         .notification span {
           position: absolute;
@@ -901,13 +903,15 @@ export default function AIAssistantPage() {
           right: 0;
         }
 
-
         .top-divider {
           width: 1px;
           height: 42px;
           background: #e3e8f0;
         }
 
+        .profile-area {
+          position: relative;
+        }
 
         .profile {
           display: flex;
@@ -915,6 +919,14 @@ export default function AIAssistantPage() {
           gap: 12px;
         }
 
+        .profile-toggle {
+          border: none;
+          background: transparent;
+          padding: 0;
+          cursor: pointer;
+          color: inherit;
+          text-align: left;
+        }
 
         .avatar {
           width: 44px;
@@ -927,8 +939,8 @@ export default function AIAssistantPage() {
           justify-content: center;
           font-weight: 700;
           font-size: 18px;
+          flex-shrink: 0;
         }
-
 
         .profile-text {
           display: flex;
@@ -936,24 +948,80 @@ export default function AIAssistantPage() {
           gap: 2px;
         }
 
-
         .profile-text strong {
           font-size: 15px;
           color: #10165c;
         }
-
 
         .profile-text small {
           font-size: 13px;
           color: #52638d;
         }
 
-
         .profile-arrow {
-          margin-left: 18px;
+          margin-left: 8px;
           font-size: 20px;
+          color: #344879;
         }
 
+        .profile-dropdown {
+          position: absolute;
+          top: calc(100% + 12px);
+          right: 0;
+          width: 205px;
+          background: #ffffff;
+          border: 1px solid #e1e7f0;
+          border-radius: 12px;
+          box-shadow: 0 12px 30px rgba(25, 49, 91, 0.12);
+          padding: 8px;
+          z-index: 1200;
+        }
+
+        .profile-dropdown-user {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+          padding: 10px 11px;
+          border-bottom: 1px solid #edf1f6;
+          margin-bottom: 5px;
+        }
+
+        .profile-dropdown-user strong {
+          font-size: 14px;
+          color: #152166;
+        }
+
+        .profile-dropdown-user span {
+          font-size: 12px;
+          color: #6c7898;
+        }
+
+        .profile-menu-item {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          min-height: 40px;
+          padding: 0 11px;
+          border: none;
+          border-radius: 8px;
+          background: transparent;
+          color: #42537e;
+          text-decoration: none;
+          font-family: inherit;
+          font-size: 14px;
+          cursor: pointer;
+          text-align: left;
+          box-sizing: border-box;
+        }
+
+        .profile-menu-item:hover {
+          background: #f2faf7;
+          color: #008f70;
+        }
+
+        .profile-menu-logout {
+          margin-top: 2px;
+        }
 
         /* =====================================================
            SIDEBAR
@@ -970,18 +1038,19 @@ export default function AIAssistantPage() {
           bottom: 0;
           display: flex;
           flex-direction: column;
-          z-index: 20;
+          z-index: 1100;
+          overflow-y: auto;
+          overflow-x: hidden;
         }
-
 
         .logo-area {
           height: 88px;
+          min-height: 88px;
           display: flex;
           align-items: center;
           padding: 12px 25px;
           border-bottom: 1px solid #eef2f7;
         }
-
 
         .logo {
           width: 205px;
@@ -989,12 +1058,10 @@ export default function AIAssistantPage() {
           object-fit: contain;
         }
 
-
         .main-nav,
         .secondary-nav {
           padding: 18px 16px;
         }
-
 
         .nav-item {
           width: 100%;
@@ -1014,14 +1081,13 @@ export default function AIAssistantPage() {
           border: none;
           cursor: pointer;
           text-align: left;
+          font-family: inherit;
         }
-
 
         .nav-item:hover {
           background: #f2faf7;
           color: #008f70;
         }
-
 
         .nav-item.active {
           background: #e4f7f1;
@@ -1029,31 +1095,28 @@ export default function AIAssistantPage() {
           font-weight: 700;
         }
 
-
         .nav-icon {
           width: 28px;
           text-align: center;
           font-size: 23px;
           font-weight: 700;
+          flex-shrink: 0;
         }
-
 
         .sidebar-divider {
           height: 1px;
           background: #e6ebf2;
           margin: 5px 24px;
+          flex-shrink: 0;
         }
-
 
         .secondary-nav {
           padding-top: 12px;
         }
 
-
         .logout-button {
           font-family: inherit;
         }
-
 
         .sidebar-message {
           margin-top: auto;
@@ -1064,13 +1127,11 @@ export default function AIAssistantPage() {
           gap: 8px;
         }
 
-
         .sidebar-message img {
           width: 82px;
           height: 82px;
           object-fit: contain;
         }
-
 
         .sidebar-message p {
           margin: 0 0 8px;
@@ -1079,7 +1140,6 @@ export default function AIAssistantPage() {
           line-height: 1.45;
         }
 
-
         /* =====================================================
            MAIN
         ===================================================== */
@@ -1087,10 +1147,10 @@ export default function AIAssistantPage() {
         .main-content {
           margin-left: 280px;
           min-height: 100vh;
-          padding-top: 72px;
+          padding-top: 88px;
         }
 
-        /* ================================================
+/* ================================================
            PAGE
         ================================================ */
 
@@ -1572,20 +1632,8 @@ export default function AIAssistantPage() {
 
         @media (max-width: 1200px) {
 
-          .sidebar {
-            width: 230px;
-          }
-
-
           .goals-header {
-            left: 230px;
-          }
-
-
-          .goals-main {
-            margin-left: 230px;
-            padding-left: 20px;
-            padding-right: 20px;
+            left: 280px;
           }
 
 
@@ -1711,9 +1759,19 @@ export default function AIAssistantPage() {
             display: none;
           }
 
+          .profile-area {
+            position: relative;
+          }
 
           .profile {
             gap: 0;
+          }
+
+          .profile-dropdown {
+            position: fixed;
+            top: 58px;
+            right: 10px;
+            width: 190px;
           }
 
 
@@ -1723,6 +1781,15 @@ export default function AIAssistantPage() {
             font-size: 15px;
           }
 
+
+          .main-content {
+            margin-left: 0;
+            padding-top: 64px;
+          }
+
+          .page-wrapper {
+            padding-bottom: 82px;
+          }
 
           /* MOBILE NAV */
 
@@ -1799,7 +1866,9 @@ export default function AIAssistantPage() {
             line-height: 20px;
           }
 
-@media (max-width: 1200px) {
+        }
+
+        @media (max-width: 1200px) {
 
           .hero-copy h1 {
             font-size: 40px;
@@ -1820,42 +1889,6 @@ export default function AIAssistantPage() {
         }
 
 @media (max-width: 900px) {
-
-          .logo-area,
-          .sidebar-divider,
-          .secondary-nav,
-
-          .main-nav .nav-item span:last-child {
-            display: block;
-            max-width: 100%;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-          }
-
-          .main-nav .nav-icon {
-            width: auto;
-            min-width: 0;
-            font-size: 18px;
-            line-height: 20px;
-          }
-
-          .student-search input {
-            min-width: 0;
-            font-size: 11px;
-          }
-
-          .student-search .search-icon {
-            font-size: 19px;
-          }
-
-          .notification,
-          .top-divider,
-          .profile-text,
-
-          .profile {
-            gap: 0;
-          }
 
           .page-wrapper {
             padding: 15px;

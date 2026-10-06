@@ -1,5 +1,9 @@
 import type { NextConfig } from "next";
 
+const backendUrl =
+  process.env.BACKEND_URL ||
+  "https://growais-backend.onrender.com";
+
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["*.trycloudflare.com"],
 
@@ -7,7 +11,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/api/:path*",
-        destination: "http://localhost:5000/api/:path*",
+        destination: `${backendUrl}/api/:path*`,
       },
     ];
   },

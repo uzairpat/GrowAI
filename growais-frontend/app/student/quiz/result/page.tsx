@@ -3,7 +3,14 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useState } from "react";
-
+import { apiFetch } from "../../../../lib/api";
+type User = {
+  id: number;
+  role: string;
+  username: string;
+  email: string | null;
+  full_name: string;
+};
 const questions = [
   {
     number: 1,
@@ -67,42 +74,89 @@ export default function QuizResultPage() {
     Array(questions.length).fill(null)
   );
   const [score, setScore] = useState(0);
+  const [user, setUser] = useState<User | null>(null);
+  const [quizData, setQuizData] = useState<any>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   useEffect(() => {
-    // Reaching the result page means the quiz has been submitted.
-    // Keep this as a fallback in case the result page is opened directly.
-    localStorage.setItem("growais_quiz_1_completed", "true");
-
-    const savedAnswers = localStorage.getItem("growais_quiz_1_answers");
-    const savedScore = localStorage.getItem("growais_quiz_1_score");
-
-    if (savedAnswers) {
+    const loadResult = async () => {
       try {
-        const parsedAnswers = JSON.parse(savedAnswers);
+        const data = await apiFetch("/api/auth/me");
 
-        if (Array.isArray(parsedAnswers)) {
-          setAnswers(parsedAnswers);
+        if (data.user.role !== "student") {
+          window.location.href = "/login";
+          return;
         }
-      } catch {
-        setAnswers(Array(questions.length).fill(null));
-      }
-    }
 
-    if (savedScore !== null) {
-      const parsedScore = Number(savedScore);
+        setUser(data.user);
 
-      if (Number.isFinite(parsedScore)) {
-        setScore(parsedScore);
+        // Load the real quiz definition so database question/option IDs
+        // can be converted back into the UI answer indexes.
+        const quizResult = await apiFetch("/api/student/quizzes/2");
+
+        if (quizResult.quiz) {
+          setQuizData(quizResult.quiz);
+        }
+
+        // Load only this logged-in student's latest attempt.
+        const attemptResult = await apiFetch(
+          "/api/student/quizzes/2/attempts/latest"
+        );
+
+        if (!attemptResult.attempt) {
+          window.location.href = "/student/quiz";
+          return;
+        }
+
+        setScore(Number(attemptResult.attempt.score) || 0);
+
+        const latestAnswers = Array(questions.length).fill(null);
+
+        if (
+          quizResult.quiz &&
+          Array.isArray(quizResult.quiz.questions) &&
+          Array.isArray(attemptResult.answers)
+        ) {
+          attemptResult.answers.forEach((savedAnswer: any) => {
+            const questionIndex = quizResult.quiz.questions.findIndex(
+              (dbQuestion: any) =>
+                Number(dbQuestion.id) === Number(savedAnswer.question_id)
+            );
+
+            if (questionIndex === -1) {
+              return;
+            }
+
+            const optionIndex =
+            quizResult.quiz.questions[questionIndex]?.options?.findIndex(
+              (dbOption: any) =>
+                Number(dbOption.id) === Number(savedAnswer.selected_option_id)
+            );
+
+            if (optionIndex !== undefined && optionIndex >= 0) {
+              latestAnswers[questionIndex] = optionIndex;
+            }
+          });
+        }
+
+        setAnswers(latestAnswers);
+      } catch (error) {
+        console.error("Unable to load quiz result:", error);
+        window.location.href = "/student/quiz";
       }
-    }
+    };
+
+    loadResult();
   }, []);
 
+  const studentName = user?.full_name || "Student";
   const percentage = Math.round((score / questions.length) * 100);
   const points = score * 10;
 
   return (
     <div className="result-page">
-      {/* ================= SAME DESKTOP SIDEBAR AS QUIZ PAGE ================= */}
+
+      {/* ================= DASHBOARD-STYLE STUDENT SIDEBAR ================= */}
       <aside className="sidebar">
         <div className="logo-area">
           <img
@@ -153,37 +207,45 @@ export default function QuizResultPage() {
 
         <nav className="secondary-nav">
           <a href="#" className="nav-item">
-            <span className="nav-icon">♧</span>
+            <span className="nav-icon">🔔</span>
             <span>Notifications</span>
           </a>
 
-          <a href="#" className="nav-item">
+          <a href="/student/profile" className="nav-item">
             <span className="nav-icon">♙</span>
             <span>Profile</span>
           </a>
 
-          <a href="#" className="nav-item">
+          <a href="/student/settings" className="nav-item">
             <span className="nav-icon">⚙</span>
             <span>Settings</span>
           </a>
 
-          <a href="#" className="nav-item">
+          <a href="/student/help" className="nav-item">
             <span className="nav-icon">?</span>
             <span>Help</span>
           </a>
 
-          <a href="/login" className="nav-item logout-button">
+          <button
+            className="nav-item logout-button"
+            type="button"
+            onClick={async () => {
+              try {
+                await apiFetch("/api/auth/logout", {
+                  method: "POST",
+                });
+              } finally {
+                window.location.href = "/login";
+              }
+            }}
+          >
             <span className="nav-icon">↪</span>
             <span>Log Out</span>
-          </a>
+          </button>
         </nav>
 
         <div className="sidebar-message">
-          <img
-            src="/assets/dashboard-plant.png"
-            alt=""
-          />
-
+          <img src="/assets/dashboard-plant.png" alt="" />
           <p>
             Small steps
             <br />
@@ -194,36 +256,100 @@ export default function QuizResultPage() {
         </div>
       </aside>
 
-      {/* ================= SAME HEADER AS QUIZ PAGE ================= */}
-      <header className="quiz-header">
-        <div className="quiz-search">
-          <span className="search-icon">⌕</span>
+      {/* ================= DASHBOARD-STYLE HEADER ================= */}
+      <header className="topbar">
+        <div className="search-box">
+          <span>⌕</span>
           <input
             type="text"
             placeholder="Search lessons, quizzes, or topics..."
           />
         </div>
 
-        <div className="quiz-profile-area">
-          <button className="notification" type="button" aria-label="Notifications">
-            ♧
-            <span />
+        <div className="topbar-right">
+          <button
+            className="notification-button"
+            type="button"
+            aria-label="Notifications"
+            title="Notifications"
+          >
+            🔔
+            <span className="notification-dot" />
           </button>
 
-          <div className="top-divider" />
+          <div className="topbar-divider" />
 
-          <div className="profile">
-            <div className="avatar">M</div>
+          <div className="profile-area">
+            <button
+              className="profile profile-toggle"
+              type="button"
+              aria-expanded={profileMenuOpen}
+              aria-haspopup="menu"
+              aria-label="Open profile menu"
+              onClick={() => setProfileMenuOpen((open) => !open)}
+            >
+              <div className="avatar">
+                {studentName.charAt(0).toUpperCase()}
+              </div>
 
-            <div className="profile-text">
-              <strong>Hi, Mohamed</strong>
-              <small>Student</small>
-            </div>
+              <div className="profile-text">
+                <strong>Hi, {studentName.split(" ")[0]}</strong>
+                <small>Student</small>
+              </div>
 
-            <span className="profile-arrow">⌄</span>
+              <span className="arrow" aria-hidden="true">
+                ⌄
+              </span>
+            </button>
+
+            {profileMenuOpen && (
+              <div className="profile-dropdown" role="menu">
+                <a
+                  href="/student/profile"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Profile
+                </a>
+
+                <a
+                  href="/student/settings"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Settings
+                </a>
+
+                <a
+                  href="/student/help"
+                  className="profile-menu-item"
+                  role="menuitem"
+                >
+                  Help
+                </a>
+
+                <button
+                  type="button"
+                  className="profile-menu-item profile-menu-logout"
+                  role="menuitem"
+                  onClick={async () => {
+                    try {
+                      await apiFetch("/api/auth/logout", {
+                        method: "POST",
+                      });
+                    } finally {
+                      window.location.href = "/login";
+                    }
+                  }}
+                >
+                  Log Out
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
+
 
       {/* ================= MAIN ================= */}
       <main className="main-content">
@@ -256,7 +382,8 @@ export default function QuizResultPage() {
             <Image
               src="/assets/quiz-result-student.png"
               alt="Student celebrating after completing the quiz"
-              fill
+              width={220}
+              height={170}
               priority
               sizes="(max-width: 700px) 100vw, 55vw"
               className="result-hero-image"
@@ -827,18 +954,32 @@ export default function QuizResultPage() {
           position: absolute;
           top: 0;
           right: 0;
-          width: 55%;
-          height: 150px;
-          border-radius: 16px;
+          width: 52%;
+          height: 168px;
+          border-radius: 18px;
           overflow: hidden;
           background: #e0f8ef;
           z-index: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
 
-        .result-hero-image {
-          object-fit: contain;
-          object-position: right bottom;
-          padding: 0 1.5% 0 8%;
+       .result-hero-image-container {
+  position: relative;
+  width: 100%;
+  height: 220px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 20px;
+} .result-hero-image {
+          object-fit: contain !important;
+          object-position: center center !important;
+          width: 100% !important;
+          height: 100% !important;
+          padding: 0 !important;
         }
 
         /* ================= RESULT LAYOUT ================= */
@@ -1167,31 +1308,23 @@ export default function QuizResultPage() {
 
         .action-card,
         .continue-card {
-          min-height: 57px;
-          border-radius: 10px;
+          min-height: 64px;
+          border-radius: 11px;
           display: grid;
-          grid-template-columns: 36px minmax(0, 1fr) 15px;
+          grid-template-columns: 38px minmax(0, 1fr) 20px;
           align-items: center;
-          gap: 8px;
-          padding: 8px 10px;
+          gap: 12px;
+          padding: 10px 12px;
           text-decoration: none;
           color: #101c68;
           background: #ffffff;
-          margin-top: 6px;
+          margin-top: 8px;
+          box-sizing: border-box;
         }
 
-        .action-card:hover {
-          background: #f8fbff;
-        }
-
-        .action-icon {
-          font-size: 25px;
-          text-align: center;
-        }
-
-        .retry {
-          color: #203a93;
-          font-size: 31px;
+        .action-card > span:nth-child(2),
+        .continue-card > span:nth-child(2) {
+          min-width: 0;
         }
 
         .action-card strong,
@@ -1204,24 +1337,27 @@ export default function QuizResultPage() {
         .action-card strong,
         .continue-card strong {
           font-size: 14px;
+          line-height: 1.25;
         }
 
         .action-card small,
         .continue-card small {
-          margin-top: 2px;
+          margin-top: 3px;
           font-size: 11px;
-          line-height: 1.25;
+          line-height: 1.35;
+          overflow-wrap: anywhere;
         }
 
         .action-card > b,
         .continue-card > b {
+          justify-self: end;
           font-size: 25px;
           color: #d18a52;
           font-weight: 400;
         }
 
         .continue-card {
-          min-height: 59px;
+          min-height: 64px;
           background: #05a879;
           color: #ffffff;
         }
@@ -1763,6 +1899,465 @@ export default function QuizResultPage() {
             font-size: 15px;
           }
         }
+
+        /* =========================================================
+           DASHBOARD HEADER + SIDEBAR + RESULT UI FINAL OVERRIDES
+        ========================================================= */
+
+        .topbar {
+          position: fixed;
+          top: 0;
+          left: 280px;
+          right: 0;
+          width: auto;
+          height: 88px;
+          border-bottom: 1px solid #e7edf5;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0 32px;
+          background: #ffffff;
+          z-index: 2000;
+          box-sizing: border-box;
+        }
+
+        .search-box {
+          width: 515px;
+          height: 48px;
+          border-radius: 12px;
+          background: #f3f6fb;
+          display: flex;
+          align-items: center;
+          padding: 0 16px;
+          gap: 12px;
+          box-sizing: border-box;
+        }
+
+        .search-box span {
+          font-size: 29px;
+          color: #5b6b91;
+          transform: rotate(-20deg);
+        }
+
+        .search-box input {
+          border: none;
+          outline: none;
+          background: transparent;
+          width: 100%;
+          min-width: 0;
+          font-size: 16px;
+          color: #18245d;
+        }
+
+        .search-box input::placeholder {
+          color: #8290ad;
+        }
+
+        .topbar-right {
+          display: flex;
+          align-items: center;
+          gap: 20px;
+        }
+
+        .notification-button {
+          position: relative;
+          border: none;
+          background: none;
+          font-size: 29px;
+          cursor: pointer;
+          line-height: 1;
+        }
+
+        .notification-dot {
+          position: absolute;
+          width: 9px;
+          height: 9px;
+          background: #f0444a;
+          border-radius: 50%;
+          top: 2px;
+          right: 0;
+          border: 2px solid #ffffff;
+        }
+
+        .topbar-divider {
+          width: 1px;
+          height: 42px;
+          background: #e2e7ef;
+        }
+
+        .profile-area {
+          position: relative;
+          display: flex;
+          align-items: center;
+        }
+
+        .profile.profile-toggle {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          min-width: 175px;
+          padding: 4px;
+          border: 0;
+          border-radius: 12px;
+          background: transparent;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .profile.profile-toggle:hover {
+          background: #f2faf7;
+        }
+
+        .avatar {
+          width: 44px;
+          height: 44px;
+          border-radius: 50%;
+          background: #0c9a72;
+          color: #ffffff;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          font-size: 17px;
+          font-weight: 700;
+          flex-shrink: 0;
+        }
+
+        .profile-text {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .profile-text strong {
+          font-size: 16px;
+          color: #11195b;
+        }
+
+        .profile-text small {
+          color: #58688e;
+          font-size: 14px;
+        }
+
+        .arrow {
+          margin-left: auto;
+          font-size: 20px;
+        }
+
+        .profile-dropdown {
+          position: absolute;
+          right: 0;
+          top: calc(100% + 8px);
+          min-width: 210px;
+          padding: 8px;
+          background: #ffffff;
+          border: 1px solid #e1e8f0;
+          border-radius: 14px;
+          box-shadow: 0 12px 32px rgba(25, 45, 80, 0.16);
+          z-index: 3000;
+        }
+
+        .profile-menu-item {
+          display: block;
+          width: 100%;
+          padding: 11px 12px;
+          border: 0;
+          border-radius: 9px;
+          background: transparent;
+          color: #17215d;
+          font: inherit;
+          text-align: left;
+          text-decoration: none;
+          cursor: pointer;
+        }
+
+        .profile-menu-item:hover {
+          background: #eef8f5;
+        }
+
+        .profile-menu-logout {
+          color: #c62828;
+        }
+
+        .sidebar {
+          width: 280px;
+          height: 100vh;
+          min-height: 0;
+          border-right: 1px solid #e7edf5;
+          background: #ffffff;
+          position: fixed;
+          left: 0;
+          top: 0;
+          bottom: 0;
+          display: flex;
+          flex-direction: column;
+          overflow-y: auto;
+          overflow-x: hidden;
+          overscroll-behavior: contain;
+          scrollbar-width: thin;
+          scrollbar-color: #cbd5e1 transparent;
+          z-index: 2100;
+        }
+
+        .sidebar::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 10px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .logo-area,
+        .main-nav,
+        .sidebar-divider,
+        .secondary-nav,
+        .sidebar-message {
+          flex-shrink: 0;
+        }
+
+        .main-content {
+          margin-left: 280px;
+          padding-top: 108px;
+        }
+
+        /* Keep Going section: make the action rows breathe and align. */
+        .keep-card {
+          padding-bottom: 14px;
+        }
+
+        .action-card:hover {
+          background: #f7fbff;
+        }
+
+        @media (max-width: 1100px) {
+          .topbar {
+            left: 210px;
+            padding: 0 20px;
+          }
+
+          .sidebar {
+            width: 210px;
+          }
+
+          .main-content {
+            margin-left: 210px;
+            padding-left: 20px;
+            padding-right: 20px;
+          }
+
+          .search-box {
+            width: min(480px, 55vw);
+          }
+
+          .result-hero {
+            width: 50%;
+          }
+        }
+
+        @media (max-width: 800px) {
+          .sidebar {
+            width: 76px;
+          }
+
+          .logo-area {
+            padding: 12px 8px;
+            justify-content: center;
+          }
+
+          .logo {
+            width: 48px;
+            height: 48px;
+            object-fit: cover;
+            object-position: left;
+          }
+
+          .nav-item {
+            justify-content: center;
+            padding: 0;
+            gap: 0;
+          }
+
+          .nav-item span:last-child {
+            display: none;
+          }
+
+          .sidebar-message {
+            display: none;
+          }
+
+          .topbar {
+            left: 76px;
+          }
+
+          .main-content {
+            margin-left: 76px;
+          }
+        }
+
+        @media (max-width: 700px) {
+          .result-page {
+            min-height: 100vh;
+            padding-bottom: 72px;
+          }
+
+          .topbar {
+            left: 0;
+            right: 0;
+            width: 100%;
+            height: 64px;
+            padding: 0 12px;
+            gap: 8px;
+            z-index: 4000;
+          }
+
+          .search-box {
+            flex: 1 1 auto;
+            width: auto;
+            max-width: none;
+            min-width: 0;
+            height: 42px;
+          }
+
+          .search-box input {
+            font-size: 12px;
+          }
+
+          .notification-button,
+          .topbar-divider {
+            display: none;
+          }
+
+          .profile-area {
+            flex: 0 0 auto;
+          }
+
+          .profile.profile-toggle {
+            min-width: 0;
+            gap: 6px;
+          }
+
+          .profile-text {
+            display: none;
+          }
+
+          .profile.profile-toggle .arrow {
+            margin-left: 0;
+            font-size: 16px;
+          }
+
+          .avatar {
+            width: 38px;
+            height: 38px;
+            font-size: 15px;
+          }
+
+          .profile-dropdown {
+            position: fixed;
+            top: 72px;
+            right: 10px;
+            min-width: 200px;
+          }
+
+          /* Dashboard-style mobile bottom navigation */
+          .mobile-bottom-nav {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            height: 66px;
+            display: grid;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            align-items: stretch;
+            background: #ffffff;
+            border-top: 1px solid #dfe5ee;
+            box-shadow: 0 -4px 15px rgba(20, 40, 80, 0.08);
+            z-index: 5000;
+            padding: 3px 2px;
+          }
+
+          .mobile-bottom-nav a {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            color: #42547f;
+            text-decoration: none;
+            font-size: 16px;
+            line-height: 1;
+            overflow: hidden;
+          }
+
+          .mobile-bottom-nav a span {
+            display: block;
+            font-size: 16px;
+            line-height: 20px;
+          }
+
+          .mobile-bottom-nav small {
+            display: block;
+            max-width: 100%;
+            font-size: 7px;
+            line-height: 9px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          .mobile-bottom-nav a.mobile-active {
+            color: #009f76;
+            font-weight: 700;
+          }
+
+          .main-content {
+            margin-left: 0;
+            width: 100%;
+            min-height: calc(100vh - 66px);
+            padding: 76px 12px 82px;
+            overflow-x: hidden;
+          }
+
+          .course-header {
+            min-height: 0;
+          }
+
+          .result-hero {
+            position: relative;
+            top: auto;
+            right: auto;
+            width: 100%;
+            height: 145px;
+            min-height: 145px;
+            margin-top: 13px;
+            border-radius: 14px;
+          }
+
+          .result-hero-image {
+            object-fit: contain !important;
+            object-position: center !important;
+            padding: 0 !important;
+          }
+
+          .result-layout {
+            margin-top: 14px;
+          }
+
+          .action-card,
+          .continue-card {
+            grid-template-columns: 36px minmax(0, 1fr) 18px;
+            gap: 10px;
+            padding: 10px;
+          }
+        }
+
       `}</style>
     </div>
   );

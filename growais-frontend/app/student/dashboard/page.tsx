@@ -14,6 +14,7 @@ type User = {
 export default function StudentDashboard() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [lessonCompleted, setLessonCompleted] = useState(false);
   const [quizCompleted, setQuizCompleted] = useState(false);
   const [scenarioCompleted, setScenarioCompleted] = useState(false);
@@ -82,43 +83,69 @@ export default function StudentDashboard() {
 
     window.addEventListener('storage', handleStorageChange);
 
-    const savedCompletion =
-      window.localStorage.getItem('growais_lesson_1_completed') === 'true';
-
-    const savedQuizCompletion =
-      window.localStorage.getItem('growais_quiz_1_completed') === 'true';
-
-    const savedScenarioCompletion =
-      window.localStorage.getItem('growais_scenario_1_completed') === 'true';
-
-    const savedScenarioResult =
-      window.localStorage.getItem('growais_scenario_1_result');
-
-    setLessonCompleted(savedCompletion);
-    setQuizCompleted(savedQuizCompletion);
-    setScenarioCompleted(savedScenarioCompletion);
-
-    if (savedScenarioResult) {
-      try {
-        const result = JSON.parse(savedScenarioResult);
-        setScenarioPoints(Number(result.points) || 0);
-        setScenarioBadgeEarned(savedScenarioCompletion);
-      } catch {
-        setScenarioPoints(0);
-        setScenarioBadgeEarned(false);
-      }
-    }
-
     const loadUser = async () => {
       try {
         const data = await apiFetch('/api/auth/me');
-
+    
         if (data.user.role !== 'student') {
           window.location.href = '/login';
           return;
         }
-
+    
         setUser(data.user);
+    
+        // Load this student's Budgeting Basics progress
+        try {
+          const lessonProgress = await apiFetch(
+            '/api/student/lessons/2/progress'
+          );
+    
+          setLessonCompleted(
+            lessonProgress.progress?.status === 'completed'
+          );
+        } catch {
+          setLessonCompleted(false);
+        }
+
+        // Load this student's latest Quiz 2 attempt from PostgreSQL.
+        // The backend uses the authenticated session, so the result
+        // is specific to the currently logged-in student.
+        try {
+          const quizResult = await apiFetch(
+            '/api/student/quizzes/2/attempts/latest'
+          );
+
+          setQuizCompleted(Boolean(quizResult.attempt));
+        } catch (error) {
+          console.error('Unable to load quiz progress:', error);
+          setQuizCompleted(false);
+        }
+        
+        // Load this student's latest Scenario 1 attempt from PostgreSQL.
+        try {
+          const scenarioResult = await apiFetch(
+            '/api/student/scenarios/1/attempts/latest'
+          );
+
+          if (scenarioResult.attempt) {
+            const completed = Boolean(scenarioResult.attempt.completed);
+            const score = Number(scenarioResult.attempt.score);
+
+            setScenarioCompleted(completed);
+            setScenarioPoints(Number.isFinite(score) ? score : 0);
+            setScenarioBadgeEarned(completed);
+          } else {
+            setScenarioCompleted(false);
+            setScenarioPoints(0);
+            setScenarioBadgeEarned(false);
+          }
+        } catch (error) {
+          console.error('Unable to load scenario progress:', error);
+          setScenarioCompleted(false);
+          setScenarioPoints(0);
+          setScenarioBadgeEarned(false);
+        }
+    
       } catch {
         window.location.href = '/login';
       } finally {
@@ -201,7 +228,8 @@ export default function StudentDashboard() {
         <nav className="secondary-nav">
 
           <a href="#" className="nav-item">
-            <span className="nav-icon">♧</span>
+            <span className="nav-icon">🔔
+           </span>
             <span>Notifications</span>
           </a>
 
@@ -275,32 +303,97 @@ export default function StudentDashboard() {
 
           <div className="topbar-right">
 
-            <button className="notification-button">
-              ♧
+            <button
+              className="notification-button"
+              type="button"
+              aria-label="Notifications"
+              title="Notifications"
+            >
+              🔔
               <span className="notification-dot" />
             </button>
 
             <div className="topbar-divider" />
 
-            <div className="profile-mini">
+            <div className="profile-area">
 
-              <div className="avatar">
-                {studentName.charAt(0).toUpperCase()}
-              </div>
+              <button
+                className="profile profile-toggle"
+                type="button"
+                aria-expanded={profileMenuOpen}
+                aria-haspopup="menu"
+                aria-label="Open profile menu"
+                onClick={() => setProfileMenuOpen((open) => !open)}
+              >
 
-              <div>
-                <strong>
-                  Hi, {studentName.split(' ')[0]}
-                </strong>
+                <div className="avatar">
+                  {studentName.charAt(0).toUpperCase()}
+                </div>
 
-                <span>
-                  Student
+                <div className="profile-text">
+
+                  <strong>
+                    Hi, {studentName.split(' ')[0]}
+                  </strong>
+
+                  <small>
+                    Student
+                  </small>
+
+                </div>
+
+                <span className="arrow" aria-hidden="true">
+                  ⌄
                 </span>
-              </div>
 
-              <span className="profile-arrow">
-               ⌄
-              </span>
+              </button>
+
+              {profileMenuOpen && (
+                <div className="profile-dropdown" role="menu">
+
+                  <a
+                    href="/student/profile"
+                    className="profile-menu-item"
+                    role="menuitem"
+                  >
+                    Profile
+                  </a>
+
+                  <a
+                    href="/student/settings"
+                    className="profile-menu-item"
+                    role="menuitem"
+                  >
+                    Settings
+                  </a>
+
+                  <a
+                    href="/student/help"
+                    className="profile-menu-item"
+                    role="menuitem"
+                  >
+                    Help
+                  </a>
+
+                  <button
+                    type="button"
+                    className="profile-menu-item profile-menu-logout"
+                    role="menuitem"
+                    onClick={async () => {
+                      try {
+                        await apiFetch('/api/auth/logout', {
+                          method: 'POST',
+                        });
+                      } finally {
+                        window.location.href = '/login';
+                      }
+                    }}
+                  >
+                    Log Out
+                  </button>
+
+                </div>
+              )}
 
             </div>
 
@@ -721,7 +814,8 @@ export default function StudentDashboard() {
 
         .sidebar {
           width: 280px;
-          min-height: 100vh;
+          height: 100vh;
+          min-height: 0;
           border-right: 1px solid #e7edf5;
           background: #ffffff;
           position: fixed;
@@ -730,7 +824,33 @@ export default function StudentDashboard() {
           bottom: 0;
           display: flex;
           flex-direction: column;
+          overflow-y: auto;
+          overflow-x: hidden;
+          overscroll-behavior: contain;
+          scrollbar-width: thin;
+          scrollbar-color: #cbd5e1 transparent;
           z-index: 20;
+        }
+
+        .sidebar::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 10px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .logo-area,
+        .main-nav,
+        .sidebar-divider,
+        .secondary-nav,
+        .sidebar-message {
+          flex-shrink: 0;
         }
 
         .logo-area {
@@ -878,6 +998,92 @@ export default function StudentDashboard() {
           display: flex;
           align-items: center;
           gap: 20px;
+        }
+
+        /* Working profile menu pattern used by the Lessons page */
+        .profile-area {
+          position: relative;
+          display: flex;
+          align-items: center;
+          gap: 20px;
+        }
+
+        .profile {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          min-width: 175px;
+        }
+
+        .profile-toggle {
+          border: 0;
+          background: transparent;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+          padding: 4px;
+          border-radius: 12px;
+        }
+
+        .profile-toggle:hover {
+          background: #f2faf7;
+        }
+
+        .profile-dropdown {
+          position: absolute;
+          right: 0;
+          top: calc(100% + 6px);
+          min-width: 190px;
+          padding: 8px;
+          background: #ffffff;
+          border: 1px solid #e1e8f0;
+          border-radius: 14px;
+          box-shadow: 0 12px 32px rgba(25, 45, 80, 0.16);
+          z-index: 1200;
+        }
+
+        .profile-menu-item {
+          display: block;
+          width: 100%;
+          padding: 11px 12px;
+          border: 0;
+          border-radius: 9px;
+          background: transparent;
+          color: #17215d;
+          font: inherit;
+          text-align: left;
+          text-decoration: none;
+          cursor: pointer;
+        }
+
+        .profile-menu-item:hover {
+          background: #eef8f5;
+        }
+
+        .profile-menu-logout {
+          color: #c62828;
+        }
+
+        .profile-text {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .profile-text strong {
+          font-size: 16px;
+          color: #11195b;
+        }
+
+        .profile-text small {
+          color: #58688e;
+          font-size: 14px;
+        }
+
+        .arrow {
+          margin-left: auto;
+          font-size: 20px;
         }
 
         .notification-button {
@@ -1753,6 +1959,7 @@ export default function StudentDashboard() {
             width: 100%;
             height: 66px;
             min-height: 66px;
+            overflow: hidden;
             border-right: 0;
             border-top: 1px solid #e4eaf2;
             box-shadow: 0 -8px 25px rgba(34, 68, 100, 0.08);
@@ -1850,13 +2057,39 @@ export default function StudentDashboard() {
             display: none;
           }
 
-          .profile-mini {
-            gap: 7px;
+          .profile-area {
+            display: flex;
+            flex: 0 0 auto;
+            gap: 4px;
           }
 
-          .profile-mini > div:nth-child(2),
-          .profile-arrow {
+          .profile-toggle {
+            min-width: 0 !important;
+            gap: 6px !important;
+            padding: 2px !important;
+          }
+
+          .profile-toggle .avatar {
+            width: 38px;
+            height: 38px;
+            flex: 0 0 38px;
+            font-size: 15px;
+          }
+
+          .profile-toggle .profile-text {
             display: none;
+          }
+
+          .profile-toggle .arrow {
+            margin-left: 0;
+            font-size: 16px;
+          }
+
+          .profile-dropdown {
+            position: fixed;
+            top: 72px;
+            right: 10px;
+            min-width: 190px;
           }
 
           .avatar {
@@ -2054,6 +2287,32 @@ export default function StudentDashboard() {
           }
         }
 
+
+
+        /* =====================================================
+           DESKTOP SIDEBAR: SCROLL INDEPENDENTLY FROM THE PAGE
+           Keep the mobile bottom navigation unchanged.
+        ===================================================== */
+        @media (min-width: 701px) {
+          .sidebar {
+            position: fixed !important;
+            top: 0;
+            bottom: 0;
+            height: 100vh;
+            height: 100dvh;
+            max-height: 100dvh;
+            min-height: 0;
+            overflow-y: scroll !important;
+            overflow-x: hidden !important;
+            overscroll-behavior-y: contain;
+            scrollbar-width: thin;
+            scrollbar-color: #cbd5e1 transparent;
+          }
+
+          .sidebar > * {
+            flex-shrink: 0;
+          }
+        }
 
       `}</style>
 

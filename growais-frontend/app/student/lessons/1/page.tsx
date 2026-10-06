@@ -5,67 +5,210 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../../../../lib/api";
 
+type User = {
+  id: number;
+  role: string;
+  username: string;
+  email: string | null;
+  full_name: string;
+};
+
 export default function LessonPage() {
+  const [user, setUser] = useState<User | null>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [progressError, setProgressError] = useState("");
 
   useEffect(() => {
-    const savedCompletion = localStorage.getItem("growais_lesson_1_completed");
+    const loadUser = async () => {
+      try {
+        const data = await apiFetch("/api/auth/me");
 
-    if (savedCompletion === "true") {
-      setCompleted(true);
-    }
+        if (data.user.role !== "student") {
+          window.location.href = "/login";
+          return;
+        }
+
+        setUser(data.user);
+      } catch {
+        window.location.href = "/login";
+      }
+    };
+
+    loadUser();
   }, []);
 
-  const completeLesson = () => {
-    localStorage.setItem("growais_lesson_1_completed", "true");
-    setCompleted(true);
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadProgress = async () => {
+      try {
+        const data = await apiFetch("/api/student/lessons/2/progress");
+
+        if (!cancelled) {
+          setCompleted(data.progress?.status === "completed");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setProgressError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load lesson progress."
+          );
+        }
+      }
+    };
+
+    loadProgress();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const completeLesson = async () => {
+    if (saving || completed) return;
+
+    setSaving(true);
+    setProgressError("");
+
+    try {
+      await apiFetch("/api/student/lessons/2/progress", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "completed",
+          progress_percentage: 100,
+        }),
+      });
+
+      setCompleted(true);
+    } catch (error) {
+      setProgressError(
+        error instanceof Error
+          ? error.message
+          : "Unable to save lesson progress."
+      );
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const studentName = user?.full_name || "Student";
+  const firstName = studentName.split(" ")[0] || "Student";
 
   return (
     <div className="growais-lesson-page">
 
       {/* =====================================================
-          TOP HEADER
+          SHARED STUDENT HEADER
       ===================================================== */}
       <header className="growais-lesson-header">
-
         <div className="growais-search-box">
           <span className="growais-search-icon">⌕</span>
-          <span>Search lessons, quizzes, or topics...</span>
+          <input
+            type="text"
+            placeholder="Search lessons, quizzes, or topics..."
+            aria-label="Search lessons, quizzes, or topics"
+          />
         </div>
 
         <div className="growais-header-right">
+          <button
+            className="growais-notification"
+            type="button"
+            aria-label="Notifications"
+            title="Notifications"
+          >
+            🔔
+            <span className="growais-notification-dot" />
+          </button>
 
-          <div className="growais-notification">
-            ♧
-            <span className="growais-notification-dot"></span>
+          <div className="growais-top-divider" />
+
+          <div className="growais-profile-wrap">
+            <button
+              className="growais-profile growais-profile-toggle"
+              type="button"
+              aria-expanded={profileMenuOpen}
+              aria-haspopup="menu"
+              aria-label="Open profile menu"
+              onClick={() => setProfileMenuOpen((open) => !open)}
+            >
+              <div className="growais-profile-circle">
+                {firstName.charAt(0).toUpperCase()}
+              </div>
+
+              <div className="growais-profile-info">
+                <strong>Hi, {firstName}</strong>
+                <span>Student</span>
+              </div>
+
+              <span className="growais-profile-arrow" aria-hidden="true">
+                ⌄
+              </span>
+            </button>
+
+            {profileMenuOpen && (
+              <div className="growais-profile-dropdown" role="menu">
+                <div className="growais-profile-dropdown-user">
+                  <strong>{studentName}</strong>
+                  <span>Student</span>
+                </div>
+
+                <a
+                  href="/student/profile"
+                  className="growais-profile-menu-item"
+                  role="menuitem"
+                >
+                  Profile
+                </a>
+
+                <a
+                  href="/student/settings"
+                  className="growais-profile-menu-item"
+                  role="menuitem"
+                >
+                  Settings
+                </a>
+
+                <a
+                  href="/student/help"
+                  className="growais-profile-menu-item"
+                  role="menuitem"
+                >
+                  Help
+                </a>
+
+                <button
+                  type="button"
+                  className="growais-profile-menu-item growais-profile-menu-logout"
+                  role="menuitem"
+                  onClick={async () => {
+                    try {
+                      await apiFetch("/api/auth/logout", {
+                        method: "POST",
+                      });
+                    } finally {
+                      window.location.href = "/login";
+                    }
+                  }}
+                >
+                  ↪&nbsp; Log Out
+                </button>
+              </div>
+            )}
           </div>
-
-          <div className="growais-profile">
-
-            <div className="growais-profile-circle">
-              M
-            </div>
-
-            <div className="growais-profile-info">
-              <strong>Hi, Mohamed</strong>
-              <span>Student</span>
-            </div>
-
-            <span className="growais-profile-arrow">
-             ⌄
-            </span>
-
-          </div>
-
         </div>
-
       </header>
 
-
-      {/* ================= SIDEBAR ================= */}
+      {/* =====================================================
+          SHARED STUDENT SIDEBAR
+      ===================================================== */}
       <aside className="sidebar">
-
         <div className="logo-area">
           <img
             src="/assets/growais-logo.png"
@@ -75,7 +218,6 @@ export default function LessonPage() {
         </div>
 
         <nav className="main-nav">
-
           <a href="/student/dashboard" className="nav-item">
             <span className="nav-icon">⌂</span>
             <span>Home</span>
@@ -86,7 +228,7 @@ export default function LessonPage() {
             <span>My Learning</span>
           </a>
 
-          <a href="/student/quizzes" className="nav-item">
+          <a href="/student/quiz" className="nav-item">
             <span className="nav-icon">▤</span>
             <span>Quizzes</span>
           </a>
@@ -110,58 +252,54 @@ export default function LessonPage() {
             <span className="nav-icon">🤖</span>
             <span>AI Assistant</span>
           </a>
-
         </nav>
 
         <div className="sidebar-divider" />
 
         <nav className="secondary-nav">
-
           <a href="#" className="nav-item">
-            <span className="nav-icon">♧</span>
+            <span className="nav-icon">🔔</span>
             <span>Notifications</span>
           </a>
 
-          <a href="#" className="nav-item">
+          <a href="/student/profile" className="nav-item">
             <span className="nav-icon">♙</span>
             <span>Profile</span>
           </a>
 
-          <a href="#" className="nav-item">
+          <a href="/student/settings" className="nav-item">
             <span className="nav-icon">⚙</span>
             <span>Settings</span>
           </a>
 
-          <a href="#" className="nav-item">
+          <a href="/student/help" className="nav-item">
             <span className="nav-icon">?</span>
             <span>Help</span>
           </a>
 
           <button
             className="nav-item logout-button"
+            type="button"
             onClick={async () => {
               try {
-                await apiFetch('/api/auth/logout', {
-                  method: 'POST'
+                await apiFetch("/api/auth/logout", {
+                  method: "POST",
                 });
               } finally {
-                window.location.href = '/login';
+                window.location.href = "/login";
               }
             }}
           >
             <span className="nav-icon">↪</span>
             <span>Log Out</span>
           </button>
-
         </nav>
 
         <div className="sidebar-message">
-
           <img
             src="/assets/dashboard-plant.png"
             alt=""
           />
-
           <p>
             Small steps
             <br />
@@ -169,14 +307,12 @@ export default function LessonPage() {
             <br />
             tomorrow.
           </p>
-
         </div>
-
       </aside>
 
-
-
-
+      {/* =====================================================
+          MOBILE BOTTOM NAVIGATION
+      ===================================================== */}
       {/* =====================================================
           MAIN CONTENT
       ===================================================== */}
@@ -199,7 +335,7 @@ export default function LessonPage() {
           <div className="growais-lesson-thumbnail">
 
             <Image
-              src="/assets/budgeting-basics.png"
+              src="/assets/budgeting.png"
               alt="Budgeting Basics"
               width={120}
               height={120}
@@ -281,8 +417,8 @@ export default function LessonPage() {
               <Image
                 src="/assets/budgeting-basics.png"
                 alt="Budgeting"
-                width={300}
-                height={220}
+                width={350}
+                height={250}
                 className="growais-hero-image"
               />
 
@@ -523,22 +659,30 @@ export default function LessonPage() {
                     : "growais-complete-button"
                 }
                 onClick={completeLesson}
-                disabled={completed}
+                disabled={completed || saving}
               >
-                {completed
-                  ? "✓ Lesson Completed"
-                  : "✓ Complete Lesson"}
+                {saving
+                  ? "Saving..."
+                  : completed
+                    ? "✓ Lesson Completed"
+                    : "✓ Complete Lesson"}
               </button>
 
 
               <Link
-                href="/student/quiz/1"
+                href="/student/quiz/2"
                 className="growais-quiz-button"
               >
                 Continue to Quiz →
               </Link>
 
             </div>
+
+            {progressError && (
+              <p role="alert" style={{ color: "#dc2626", marginTop: "12px" }}>
+                {progressError}
+              </p>
+            )}
 
           </div>
 
@@ -565,7 +709,7 @@ export default function LessonPage() {
 
 
         /* =====================================================
-           HEADER
+           SHARED STUDENT HEADER
         ===================================================== */
 
         .growais-lesson-header {
@@ -573,115 +717,127 @@ export default function LessonPage() {
           top: 0;
           left: 280px;
           right: 0;
-          height: 72px;
-
+          height: 88px;
           background: #ffffff;
-          border-bottom: 1px solid #e5eaf2;
-
+          border-bottom: 1px solid #e7edf5;
           display: flex;
           align-items: center;
           justify-content: space-between;
-
           padding: 0 32px;
-
           z-index: 100;
         }
 
-
         .growais-search-box {
           width: 560px;
-          height: 44px;
-
-          background: #f4f7fb;
+          height: 48px;
+          background: #f3f6fb;
           border-radius: 12px;
-
           display: flex;
           align-items: center;
-
           gap: 12px;
-
-          padding: 0 18px;
-
+          padding: 0 16px;
           color: #7180a3;
-
           font-size: 15px;
         }
 
-
         .growais-search-icon {
-          font-size: 24px;
-          color: #344879;
+          font-size: 25px;
+          color: #41557f;
+          transform: rotate(-20deg);
+          flex-shrink: 0;
         }
 
+        .growais-search-box input {
+          border: none;
+          outline: none;
+          width: 100%;
+          background: transparent;
+          color: #18245d;
+          font-size: 16px;
+        }
+
+        .growais-search-box input::placeholder {
+          color: #8190ad;
+        }
 
         .growais-header-right {
+          position: relative;
           display: flex;
           align-items: center;
-          gap: 24px;
+          gap: 20px;
         }
-
 
         .growais-notification {
           position: relative;
-
-          font-size: 26px;
-          color: #344879;
-
-          width: 30px;
-          height: 35px;
-
-          display: flex;
+          width: 42px;
+          height: 42px;
+          display: inline-flex;
           align-items: center;
           justify-content: center;
+          border: none;
+          border-radius: 10px;
+          background: transparent;
+          font-size: 25px;
+          cursor: pointer;
         }
 
+        .growais-notification:hover {
+          background: #f2faf7;
+        }
 
         .growais-notification-dot {
           position: absolute;
-
-          width: 8px;
-          height: 8px;
-
-          background: #ff4d4d;
-
+          width: 9px;
+          height: 9px;
+          background: #f0444a;
           border-radius: 50%;
-
-          top: 3px;
-          right: 0;
+          top: 2px;
+          right: 1px;
+          border: 2px solid #ffffff;
         }
 
+        .growais-top-divider {
+          width: 1px;
+          height: 42px;
+          background: #e2e7ef;
+        }
+
+        .growais-profile-wrap {
+          position: relative;
+        }
 
         .growais-profile {
-          height: 50px;
-
           display: flex;
           align-items: center;
-
           gap: 12px;
-
-          border-left: 1px solid #e4e8f0;
-
-          padding-left: 22px;
+          min-width: 175px;
+          border: none;
+          border-radius: 12px;
+          background: transparent;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+          padding: 4px;
         }
 
+        .growais-profile:hover {
+          background: #f2faf7;
+        }
 
         .growais-profile-circle {
           width: 44px;
           height: 44px;
-
           border-radius: 50%;
-
-          background: #05a779;
+          background: #0b9b72;
           color: #ffffff;
-
           display: flex;
           align-items: center;
           justify-content: center;
-
+          font-size: 17px;
           font-weight: 700;
-          font-size: 18px;
+          flex-shrink: 0;
         }
-
 
         .growais-profile-info {
           display: flex;
@@ -689,29 +845,88 @@ export default function LessonPage() {
           gap: 3px;
         }
 
-
         .growais-profile-info strong {
+          font-size: 16px;
+          color: #11195b;
+        }
+
+        .growais-profile-info span {
+          font-size: 14px;
+          color: #59698e;
+        }
+
+        .growais-profile-arrow {
+          margin-left: auto;
+          font-size: 20px;
+          color: #17215d;
+        }
+
+        .growais-profile-dropdown {
+          position: absolute;
+          top: calc(100% + 8px);
+          right: 0;
+          width: 220px;
+          padding: 8px;
+          background: #ffffff;
+          border: 1px solid #e1e8f0;
+          border-radius: 14px;
+          box-shadow: 0 12px 32px rgba(25, 45, 80, 0.16);
+          z-index: 1200;
+        }
+
+        .growais-profile-dropdown-user {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          padding: 10px 12px 12px;
+          margin-bottom: 6px;
+          border-bottom: 1px solid #edf1f6;
+        }
+
+        .growais-profile-dropdown-user strong {
+          color: #17215d;
           font-size: 15px;
         }
 
-
-        .growais-profile-info span {
+        .growais-profile-dropdown-user span {
+          color: #64718f;
           font-size: 13px;
-          color: #53638a;
         }
 
-
-        .growais-profile-arrow {
-          margin-left: 8px;
-          font-size: 18px;
+        .growais-profile-menu-item {
+          display: block;
+          width: 100%;
+          min-height: 44px;
+          padding: 10px 12px;
+          border: none;
+          border-radius: 9px;
+          background: transparent;
+          color: #17215d;
+          font: inherit;
+          text-align: left;
+          text-decoration: none;
+          cursor: pointer;
         }
 
+        .growais-profile-menu-item:hover {
+          background: #eef8f5;
+        }
 
-        /* SIDEBAR */
+        .growais-profile-menu-logout {
+          border-top: 1px solid #edf1f6;
+          margin-top: 6px;
+          color: #c62828;
+        }
+
+        /* =====================================================
+           SHARED STUDENT SIDEBAR
+        ===================================================== */
 
         .sidebar {
           width: 280px;
-          min-height: 100vh;
+          height: 100vh;
+          height: 100dvh;
+          min-height: 0;
           border-right: 1px solid #e7edf5;
           background: #ffffff;
           position: fixed;
@@ -720,7 +935,38 @@ export default function LessonPage() {
           bottom: 0;
           display: flex;
           flex-direction: column;
-          z-index: 20;
+          overflow-y: auto;
+          overflow-x: hidden;
+          overscroll-behavior-y: contain;
+          -webkit-overflow-scrolling: touch;
+          scrollbar-width: thin;
+          scrollbar-color: #cbd5e1 transparent;
+          z-index: 110;
+        }
+
+        .sidebar::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 10px;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb:hover {
+          background: #94a3b8;
+        }
+
+        .logo-area,
+        .main-nav,
+        .sidebar-divider,
+        .secondary-nav,
+        .sidebar-message {
+          flex-shrink: 0;
         }
 
         .logo-area {
@@ -778,6 +1024,7 @@ export default function LessonPage() {
           text-align: center;
           font-size: 23px;
           font-weight: 700;
+          flex-shrink: 0;
         }
 
         .sidebar-divider {
@@ -823,7 +1070,7 @@ export default function LessonPage() {
         .growais-lesson-main {
           margin-left: 280px;
 
-          padding: 100px 48px 70px;
+          padding: 108px 48px 70px;
 
           max-width: 1600px;
 
@@ -869,27 +1116,23 @@ export default function LessonPage() {
         .growais-lesson-thumbnail {
           width: 100px;
           height: 100px;
-
           flex-shrink: 0;
-
           background: #eafaf4;
-
           border-radius: 18px;
-
           display: flex;
-
           align-items: center;
           justify-content: center;
-
           overflow: hidden;
         }
 
 
         .growais-lesson-thumbnail-image {
-          width: 100%;
-          height: 100%;
-
+          display: block;
+          width: 82%;
+          height: 82%;
+          margin: 0 auto;
           object-fit: contain;
+          object-position: center center;
         }
 
 
@@ -1040,33 +1283,36 @@ export default function LessonPage() {
 
         .growais-hero-visual {
           width: 55%;
-
           height: 100%;
-
           display: flex;
-
           align-items: center;
-
           justify-content: center;
+          padding: 0 36px;
+          box-sizing: border-box;
         }
 
 
         .growais-hero-circle {
-          width: 260px;
-          height: 220px;
-
+          width: 100%;
+          max-width: 340px;
+          height: 100%;
+          max-height: 235px;
           display: flex;
-
           align-items: center;
           justify-content: center;
+          background: transparent;
         }
 
-
         .growais-hero-image {
-          width: 260px;
-          height: 200px;
-
+          display: block;
+          width: 100%;
+          max-width: 320px;
+          height: 100%;
+          max-height: 220px;
           object-fit: contain;
+          object-position: center center;
+          background: transparent;
+          margin: 0 auto;
         }
 
 
@@ -1430,15 +1676,14 @@ export default function LessonPage() {
         ===================================================== */
 
         @media (max-width: 1100px) {
-
-          .growais-lesson-sidebar {
-            width: 210px;
-          }
-
           .growais-lesson-header {
             left: 210px;
             padding-left: 22px;
             padding-right: 22px;
+          }
+
+          .sidebar {
+            width: 210px;
           }
 
           .growais-lesson-main {
@@ -1456,340 +1701,382 @@ export default function LessonPage() {
           }
         }
 
-       @media (max-width: 700px) {
+        @media (max-width: 800px) {
+          .sidebar {
+            width: 76px;
+          }
+
+          .logo-area {
+            padding: 12px 8px;
+            justify-content: center;
+          }
+
+          .logo {
+            width: 48px;
+            height: 48px;
+            object-fit: cover;
+            object-position: left;
+          }
+
+          .nav-item {
+            justify-content: center;
+            padding: 0;
+            gap: 0;
+          }
+
+          .nav-item span:last-child {
+            display: none;
+          }
+
+          .sidebar-message {
+            display: none;
+          }
+
+          .growais-lesson-header {
+            left: 76px;
+          }
+
+          .growais-lesson-main {
+            margin-left: 76px;
+          }
+        }
+
+        @media (max-width: 700px) {
+          body {
+            overflow-x: hidden;
+          }
+
+          .growais-lesson-page {
+            min-height: 100vh;
+            padding-bottom: 70px;
+          }
+
+          /* Mobile bottom navigation */
+          .sidebar {
+            position: fixed;
+            left: 0;
+            right: 0;
+            top: auto;
+            bottom: 0;
+            width: 100%;
+            height: 66px;
+            min-height: 66px;
+            max-height: 66px;
+            overflow: hidden;
+            border-right: 0;
+            border-top: 1px solid #e4eaf2;
+            box-shadow: 0 -8px 25px rgba(34, 68, 100, 0.08);
+            display: block;
+            z-index: 1000;
+          }
+
+          .logo-area,
+          .sidebar-divider,
+          .secondary-nav,
+          .sidebar-message {
+            display: none;
+          }
+
+          .main-nav {
+            width: 100%;
+            height: 100%;
+            padding: 4px 3px;
+            display: flex;
+            align-items: stretch;
+            justify-content: space-between;
+            gap: 0;
+            overflow: hidden;
+          }
+
+          .main-nav .nav-item {
+            flex: 1 1 0;
+            width: auto;
+            min-width: 0;
+            height: 58px;
+            margin: 0;
+            padding: 4px 1px;
+            border-radius: 9px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            font-size: 9px;
+            line-height: 1.1;
+            text-align: center;
+          }
+
+          .main-nav .nav-item span:last-child {
+            display: block;
+            white-space: nowrap;
+          }
+
+          .main-nav .nav-icon {
+            width: auto;
+            font-size: 19px;
+            line-height: 20px;
+          }
+
+          /* Mobile header: search + gold bell + profile menu */
+          .growais-lesson-header {
+            position: sticky;
+            top: 0;
+            left: 0;
+            right: 0;
+            width: 100%;
+            height: 64px;
+            padding: 0 10px;
+            gap: 8px;
+            background: #ffffff;
+            z-index: 1200;
+          }
+
+          .growais-search-box {
+            flex: 1;
+            width: auto;
+            min-width: 0;
+            height: 42px;
+            padding: 0 10px;
+            gap: 6px;
+            font-size: 12px;
+          }
+
+          .growais-search-icon {
+            font-size: 21px;
+          }
+
+          .growais-search-box input {
+            font-size: 12px;
+          }
+
+          .growais-header-right {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            flex-shrink: 0;
+          }
+
+          .growais-notification {
+            width: 38px;
+            height: 38px;
+            font-size: 21px;
+          }
+
+          .growais-top-divider {
+            height: 34px;
+          }
+
+          .growais-profile {
+            min-width: 0;
+            gap: 7px;
+            padding: 3px;
+          }
+
+          .growais-profile-circle {
+            width: 38px;
+            height: 38px;
+            font-size: 15px;
+          }
+
+          .growais-profile-info {
+            display: flex;
+          }
+
+          .growais-profile-info strong {
+            font-size: 12px;
+          }
+
+          .growais-profile-info span {
+            font-size: 11px;
+          }
+
+          .growais-profile-arrow {
+            font-size: 17px;
+          }
+
+          .growais-profile-dropdown {
+            position: fixed;
+            top: 70px;
+            right: 10px;
+            width: min(240px, calc(100vw - 20px));
+          }
+
+          .growais-lesson-main {
+            margin-left: 0;
+            padding: 22px 14px 80px;
+            width: 100%;
+            min-height: calc(100vh - 64px);
+          }
+
+          .growais-lesson-heading {
+            flex-wrap: wrap;
+            gap: 14px;
+          }
+
+          .growais-lesson-progress {
+            width: 100%;
+          }
+
+          .growais-lesson-title h1 {
+            font-size: 29px;
+          }
+
+          .growais-lesson-title p {
+            font-size: 14px;
+            line-height: 1.5;
+          }
+
+          .growais-lesson-hero {
+            height: 220px;
+            border-radius: 18px;
+            margin-bottom: 34px;
+          }
+
+          .growais-hero-copy {
+            width: 50%;
+            padding-left: 25px;
+          }
+
+          .growais-hero-copy h2 {
+            font-size: 22px;
+            line-height: 1.35;
+          }
+
+          .growais-hero-visual {
+            width: 50%;
+          }
+
+          .growais-hero-image {
+            width: 100%;
+            max-width: 210px;
+            height: 170px;
+            object-fit: contain;
+            object-position: center center;
+          }
+
+          .growais-lesson-content h2 {
+            font-size: 25px;
+          }
+
+          .growais-lesson-content > p {
+            font-size: 15px;
+            line-height: 1.7;
+          }
+
+          .growais-info-cards {
+            grid-template-columns: 1fr;
+          }
+
+          .growais-table-row {
+            grid-template-columns: 1fr 100px;
+            padding: 13px 15px;
+            font-size: 14px;
+          }
+
+          .growais-key-point {
+            padding: 18px;
+            gap: 12px;
+          }
+
+          .growais-completion-card {
+            padding: 30px 20px;
+          }
+
+          .growais-completion-card h2 {
+            font-size: 25px;
+          }
+
+          .growais-completion-actions {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 12px;
+          }
+
+          .growais-complete-button,
+          .growais-quiz-button {
+            width: 100%;
+            text-align: center;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .growais-profile-info {
+            display: none;
+          }
+
+          .growais-search-box {
+            max-width: none;
+          }
+
+          .growais-lesson-heading {
+            gap: 10px;
+          }
+
+          .growais-lesson-thumbnail {
+            width: 82px;
+            height: 82px;
+          }
+
+          .growais-lesson-title h1 {
+            font-size: 25px;
+          }
+
+          .growais-lesson-hero {
+            height: 195px;
+          }
+
+          .growais-hero-copy {
+            padding-left: 18px;
+          }
+
+          .growais-hero-copy h2 {
+            font-size: 18px;
+          }
+
+          .growais-hero-image {
+            width: 100%;
+            max-width: 175px;
+            height: 145px;
+            object-fit: contain;
+            object-position: center center;
+          }
+        }
+
+        @media (max-width: 380px) {
+          .main-nav .nav-item {
+            font-size: 8px;
+          }
+
+          .main-nav .nav-icon {
+            font-size: 18px;
+          }
+
+          .growais-search-box input {
+            font-size: 11px;
+          }
+
+          .growais-lesson-title h1 {
+            font-size: 24px;
+          }
+
+          .growais-lesson-hero {
+            height: 180px;
+          }
+
+          .growais-hero-copy h2 {
+            font-size: 16px;
+          }
+
+          .growais-hero-image {
+            width: 100%;
+            max-width: 155px;
+            height: 125px;
+            object-fit: contain;
+            object-position: center center;
+          }
+        }
 
-  body {
-    overflow-x: hidden;
-  }
 
-  /* =========================================
-     MOBILE BOTTOM NAVIGATION
-     SAME AS STUDENT DASHBOARD
-  ========================================= */
-
-  .growais-lesson-page {
-    min-height: 100vh;
-
-    padding-bottom: 70px;
-  }
-
-  .sidebar {
-    position: fixed;
-
-    left: 0;
-    right: 0;
-    top: auto;
-    bottom: 0;
-
-    width: 100%;
-    height: 66px;
-    min-height: 66px;
-
-    border-right: 0;
-    border-top: 1px solid #e4eaf2;
-
-    background: #ffffff;
-
-    box-shadow: 0 -8px 25px rgba(34, 68, 100, 0.08);
-
-    display: block;
-
-    z-index: 1000;
-  }
-
-  /* Hide desktop sidebar elements */
-
-  .logo-area,
-  .sidebar-divider,
-  .secondary-nav,
-  .sidebar-message {
-    display: none;
-  }
-
-  /* Bottom navigation container */
-
-  .main-nav {
-    width: 100%;
-    height: 100%;
-
-    padding: 4px 3px;
-
-    display: flex;
-    align-items: stretch;
-    justify-content: space-between;
-
-    gap: 0;
-    overflow: hidden;
-  }
-
-  /* Navigation items */
-
-  .main-nav .nav-item {
-    flex: 1 1 0;
-
-    width: auto;
-    min-width: 0;
-
-    height: 58px;
-
-    margin: 0;
-    padding: 4px 1px;
-
-    border-radius: 9px;
-
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-
-    gap: 2px;
-
-    font-size: 9px;
-    line-height: 1.1;
-
-    text-align: center;
-  }
-
-  /* Show navigation text */
-
-  .main-nav .nav-item span:last-child {
-    display: block;
-
-    white-space: nowrap;
-  }
-
-  /* Navigation icons */
-
-  .main-nav .nav-icon {
-    width: auto;
-
-    font-size: 19px;
-    line-height: 20px;
-  }
-
-  /* =========================================
-     MOBILE HEADER
-  ========================================= */
-
-  .growais-lesson-header {
-    position: sticky;
-
-    top: 0;
-    left: 0;
-    right: 0;
-
-    height: 64px;
-
-    padding: 0 12px;
-
-    background: #ffffff;
-
-    z-index: 100;
-  }
-
-  .growais-search-box {
-    flex: 1;
-
-    width: auto;
-    min-width: 0;
-
-    height: 42px;
-
-    padding: 0 11px;
-
-    gap: 7px;
-
-    font-size: 12px;
-  }
-
-  .growais-search-icon {
-    font-size: 22px;
-  }
-
-  .growais-header-right {
-    display: none;
-  }
-
-  /* =========================================
-     MAIN CONTENT
-  ========================================= */
-
-  .growais-lesson-main {
-    margin-left: 0;
-
-    padding: 22px 14px 80px;
-
-    width: 100%;
-
-    min-height: calc(100vh - 64px);
-  }
-
-  /* =========================================
-     LESSON HEADER
-  ========================================= */
-
-  .growais-lesson-heading {
-    flex-wrap: wrap;
-
-    gap: 14px;
-  }
-
-  .growais-lesson-progress {
-    width: 100%;
-  }
-
-  .growais-lesson-title h1 {
-    font-size: 29px;
-  }
-
-  .growais-lesson-title p {
-    font-size: 14px;
-
-    line-height: 1.5;
-  }
-
-  /* =========================================
-     LESSON HERO
-  ========================================= */
-
-  .growais-lesson-hero {
-    height: 220px;
-
-    border-radius: 18px;
-  }
-
-  .growais-hero-copy {
-    width: 50%;
-
-    padding-left: 25px;
-  }
-
-  .growais-hero-copy h2 {
-    font-size: 22px;
-
-    line-height: 1.35;
-  }
-
-  .growais-hero-visual {
-    width: 50%;
-  }
-
-  .growais-hero-image {
-    width: 210px;
-    height: 170px;
-  }
-
-  /* =========================================
-     CONTENT
-  ========================================= */
-
-  .growais-lesson-content h2 {
-    font-size: 25px;
-  }
-
-  .growais-lesson-content > p {
-    font-size: 15px;
-
-    line-height: 1.7;
-  }
-
-  /* =========================================
-     INFO CARDS
-  ========================================= */
-
-  .growais-info-cards {
-    grid-template-columns: 1fr;
-  }
-
-  /* =========================================
-     BUDGET TABLE
-  ========================================= */
-
-  .growais-table-row {
-    grid-template-columns: 1fr 100px;
-
-    padding: 13px 15px;
-
-    font-size: 14px;
-  }
-
-  /* =========================================
-     KEY POINT
-  ========================================= */
-
-  .growais-key-point {
-    padding: 18px;
-
-    gap: 12px;
-  }
-
-  /* =========================================
-     COMPLETION
-  ========================================= */
-
-  .growais-completion-card {
-    padding: 30px 20px;
-  }
-
-  .growais-completion-card h2 {
-    font-size: 25px;
-  }
-
-  .growais-completion-actions {
-    flex-direction: column;
-
-    align-items: stretch;
-
-    gap: 12px;
-  }
-
-  .growais-complete-button,
-  .growais-quiz-button {
-    width: 100%;
-
-    text-align: center;
-  }
-
-}
-
-
-/* =========================================
-   EXTRA SMALL PHONES
-========================================= */
-
-@media (max-width: 380px) {
-
-  .main-nav .nav-item {
-    font-size: 8px;
-  }
-
-  .main-nav .nav-icon {
-    font-size: 18px;
-  }
-
-  .growais-lesson-title h1 {
-    font-size: 24px;
-  }
-
-  .growais-lesson-hero {
-    height: 185px;
-  }
-
-  .growais-hero-copy {
-    padding-left: 18px;
-  }
-
-  .growais-hero-copy h2 {
-    font-size: 17px;
-  }
-
-  .growais-hero-image {
-    width: 155px;
-    height: 125px;
-  }
-
-}
-        
       `}</style>
 
     </div>

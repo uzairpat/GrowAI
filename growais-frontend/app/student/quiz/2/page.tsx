@@ -2,8 +2,16 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch } from "../../../../lib/api";
+
+type User = {
+  id: number;
+  role: string;
+  username: string;
+  email: string | null;
+  full_name: string;
+};
 
 type Question = {
   question: string;
@@ -68,12 +76,48 @@ export default function QuizPage() {
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   const [answers, setAnswers] = useState<(number | null)[]>(
     Array(questions.length).fill(null)
   );
 
+  // Database quiz definition used to map the displayed answers
+  // to the real question/option IDs before saving the attempt.
+  const [quizData, setQuizData] = useState<any>(null);
+
+  useEffect(() => {
+    const loadQuizPage = async () => {
+      try {
+        const data = await apiFetch('/api/auth/me');
+
+        if (data.user.role !== 'student') {
+          window.location.href = '/login';
+          return;
+        }
+
+        setUser(data.user);
+
+        // Load the real quiz questions/options from PostgreSQL.
+        // The UI still uses the existing question design/content,
+        // but submission uses the database IDs.
+        const quizResult = await apiFetch('/api/student/quizzes/2');
+
+        if (quizResult.quiz) {
+          setQuizData(quizResult.quiz);
+        }
+      } catch (error) {
+        console.error('Unable to load quiz:', error);
+        window.location.href = '/login';
+      }
+    };
+
+    loadQuizPage();
+  }, []);
+
   const question = questions[currentQuestion];
+  const studentName = user?.full_name || 'Student';
 
   const answeredCount = submitted
     ? currentQuestion + 1
@@ -92,7 +136,7 @@ export default function QuizPage() {
     setSubmitted(true);
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (currentQuestion < questions.length - 1) {
       setCurrentQuestion((previous) => previous + 1);
       setSelectedAnswer(null);
@@ -106,195 +150,287 @@ export default function QuizPage() {
       finalAnswers[currentQuestion] = selectedAnswer;
     }
 
-    const finalScore = finalAnswers.reduce<number>(
-      (total, answer, index) => {
-        if (
-          answer !== null &&
-          answer === questions[index].answer
-        ) {
-          return total + 1;
-        }
-    
-        return total;
-      },
-      0
-    );
+  
 
-    localStorage.setItem(
-      "growais_quiz_1_answers",
-      JSON.stringify(finalAnswers)
-    );
+    if (
+      !quizData ||
+      !Array.isArray(quizData.questions) ||
+      quizData.questions.length !== questions.length
+    ) {
+      console.error("Quiz data is not available or does not match the quiz.");
+      return;
+    }
 
-    localStorage.setItem(
-      "growais_quiz_1_score",
-      String(finalScore)
-    );
+    // Convert the displayed answer indexes into the real database
+    // question_id / option_id pairs expected by the backend.
+    const backendAnswers = finalAnswers.map((selectedIndex, index) => {
+      if (selectedIndex === null) {
+        return null;
+      }
 
-    // Mark the quiz as completed so the Quiz Home,
-    // Dashboard, and Progress pages can read the same status.
-    localStorage.setItem("growais_quiz_1_completed", "true");
+      const dbQuestion = quizData.questions[index];
+      const dbOption = dbQuestion?.options?.[selectedIndex];
 
-    window.location.href = "/student/quiz/result";
+      if (!dbQuestion?.id || !dbOption?.id) {
+        return null;
+      }
+
+      return {
+        question_id: Number(dbQuestion.id),
+        option_id: Number(dbOption.id),
+      };
+    });
+
+    if (backendAnswers.some((answer) => answer === null)) {
+      console.error("Unable to map all quiz answers to database IDs.");
+      return;
+    }
+
+    try {
+      await apiFetch("/api/student/quizzes/2/attempts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          answers: backendAnswers,
+        }),
+      });
+
+      // The result page reads the latest attempt directly from PostgreSQL.
+      window.location.href = "/student/quiz/result";
+    } catch (error) {
+      console.error("Unable to save quiz attempt:", error);
+      alert("Unable to save your quiz result. Please try again.");
+    }
   };
 
   return (
     <div className="quiz-page">
 
-      {/* ================= HEADER ================= */}
+              {/* TOP BAR */}
+              <header className="topbar">
+      
+                <div className="search-box">
+                  <span>⌕</span>
+      
+                  <input
+                    type="text"
+                    placeholder="Search lessons, quizzes, or topics..."
+                  />
+                </div>
+      
+                <div className="topbar-right">
+      
+                  <button
+                    className="notification-button"
+                    type="button"
+                    aria-label="Notifications"
+                    title="Notifications"
+                  >
+                    🔔
+                    <span className="notification-dot" />
+                  </button>
+      
+                  <div className="topbar-divider" />
+      
+                  <div className="profile-area">
+      
+                    <button
+                      className="profile profile-toggle"
+                      type="button"
+                      aria-expanded={profileMenuOpen}
+                      aria-haspopup="menu"
+                      aria-label="Open profile menu"
+                      onClick={() => setProfileMenuOpen((open) => !open)}
+                    >
+      
+                      <div className="avatar">
+                        {studentName.charAt(0).toUpperCase()}
+                      </div>
+      
+                      <div className="profile-text">
+      
+                        <strong>
+                          Hi, {studentName.split(' ')[0]}
+                        </strong>
+      
+                        <small>
+                          Student
+                        </small>
+      
+                      </div>
+      
+                      <span className="arrow" aria-hidden="true">
+                        ⌄
+                      </span>
+      
+                    </button>
+      
+                    {profileMenuOpen && (
+                      <div className="profile-dropdown" role="menu">
+      
+                        <a
+                          href="/student/profile"
+                          className="profile-menu-item"
+                          role="menuitem"
+                        >
+                          Profile
+                        </a>
+      
+                        <a
+                          href="/student/settings"
+                          className="profile-menu-item"
+                          role="menuitem"
+                        >
+                          Settings
+                        </a>
+      
+                        <a
+                          href="/student/help"
+                          className="profile-menu-item"
+                          role="menuitem"
+                        >
+                          Help
+                        </a>
+      
+                        <button
+                          type="button"
+                          className="profile-menu-item profile-menu-logout"
+                          role="menuitem"
+                          onClick={async () => {
+                            try {
+                              await apiFetch('/api/auth/logout', {
+                                method: 'POST',
+                              });
+                            } finally {
+                              window.location.href = '/login';
+                            }
+                          }}
+                        >
+                          Log Out
+                        </button>
+      
+                      </div>
+                    )}
+      
+                  </div>
+      
+                </div>
+      
+              </header>
 
-      <header className="quiz-header">
-
-        <div className="quiz-search">
-          <span className="search-icon">⌕</span>
-
-          <input
-            type="text"
-            placeholder="Search lessons, quizzes, or topics..."
-          />
-        </div>
-
-        <div className="quiz-profile-area">
-
-          <button className="notification">
-            ♧
-            <span />
-          </button>
-
-          <div className="top-divider" />
-
-          <div className="profile">
-
-            <div className="avatar">
-              M
-            </div>
-
-            <div className="profile-text">
-              <strong>Hi, Mohamed</strong>
-              <small>Student</small>
-            </div>
-
-            <span className="profile-arrow">
-              ⌄
-            </span>
-
-          </div>
-
-        </div>
-
-      </header>
-
-
-      {/* ================= SIDEBAR ================= */}
-      <aside className="sidebar">
-
-        <div className="logo-area">
-          <img
-            src="/assets/growais-logo.png"
-            alt="GrowAIs"
-            className="logo"
-          />
-        </div>
-
-        <nav className="main-nav">
-
-          <a href="/student/dashboard" className="nav-item">
-            <span className="nav-icon">⌂</span>
-            <span>Home</span>
-          </a>
-
-          <a href="/student/lessons" className="nav-item">
-            <span className="nav-icon">▣</span>
-            <span>My Learning</span>
-          </a>
-
-          <a href="/student/quiz" className="nav-item active">
-            <span className="nav-icon">▤</span>
-            <span>Quizzes</span>
-          </a>
-
-          <a href="/student/scenarios" className="nav-item">
-            <span className="nav-icon">🎮</span>
-            <span>Scenarios</span>
-          </a>
-
-          <a href="/student/goals" className="nav-item">
-            <span className="nav-icon">◎</span>
-            <span>My Goals</span>
-          </a>
-
-          <a href="/student/progress" className="nav-item">
-            <span className="nav-icon">▥</span>
-            <span>My Progress</span>
-          </a>
-
-          <a href="/student/ai-assistant" className="nav-item">
-            <span className="nav-icon">🤖</span>
-            <span>AI Assistant</span>
-          </a>
-
-        </nav>
-
-        <div className="sidebar-divider" />
-
-        <nav className="secondary-nav">
-
-          <a href="#" className="nav-item">
-            <span className="nav-icon">♧</span>
-            <span>Notifications</span>
-          </a>
-
-          <a href="#" className="nav-item">
-            <span className="nav-icon">♙</span>
-            <span>Profile</span>
-          </a>
-
-          <a href="#" className="nav-item">
-            <span className="nav-icon">⚙</span>
-            <span>Settings</span>
-          </a>
-
-          <a href="#" className="nav-item">
-            <span className="nav-icon">?</span>
-            <span>Help</span>
-          </a>
-
-          <button
-            className="nav-item logout-button"
-            onClick={async () => {
-              try {
-                await apiFetch('/api/auth/logout', {
-                  method: 'POST'
-                });
-              } finally {
-                window.location.href = '/login';
-              }
-            }}
-          >
-            <span className="nav-icon">↪</span>
-            <span>Log Out</span>
-          </button>
-
-        </nav>
-
-        <div className="sidebar-message">
-
-          <img
-            src="/assets/dashboard-plant.png"
-            alt=""
-          />
-
-          <p>
-            Small steps
-            <br />
-            today, big dreams
-            <br />
-            tomorrow.
-          </p>
-
-        </div>
-
-      </aside>
-
+            {/* ================= SIDEBAR ================= */}
+            <aside className="sidebar">
+      
+              <div className="logo-area">
+                <img
+                  src="/assets/growais-logo.png"
+                  alt="GrowAIs"
+                  className="logo"
+                />
+              </div>
+      
+              <nav className="main-nav">
+      
+                <a href="/student/dashboard" className="nav-item">
+                  <span className="nav-icon">⌂</span>
+                  <span>Home</span>
+                </a>
+      
+                <a href="/student/lessons" className="nav-item">
+                  <span className="nav-icon">▣</span>
+                  <span>My Learning</span>
+                </a>
+      
+                <a href="/student/quiz" className="nav-item active">
+                  <span className="nav-icon">▤</span>
+                  <span>Quizzes</span>
+                </a>
+      
+                <a href="/student/scenarios" className="nav-item">
+                  <span className="nav-icon">🎮</span>
+                  <span>Scenarios</span>
+                </a>
+      
+                <a href="/student/goals" className="nav-item">
+                  <span className="nav-icon">◎</span>
+                  <span>My Goals</span>
+                </a>
+      
+                <a href="/student/progress" className="nav-item">
+                  <span className="nav-icon">▥</span>
+                  <span>My Progress</span>
+                </a>
+      
+                <a href="/student/ai-assistant" className="nav-item">
+                  <span className="nav-icon">🤖</span>
+                  <span>AI Assistant</span>
+                </a>
+      
+              </nav>
+      
+              <div className="sidebar-divider" />
+      
+              <nav className="secondary-nav">
+      
+                <a href="#" className="nav-item">
+                  <span className="nav-icon">🔔
+                 </span>
+                  <span>Notifications</span>
+                </a>
+      
+                <a href="#" className="nav-item">
+                  <span className="nav-icon">♙</span>
+                  <span>Profile</span>
+                </a>
+      
+                <a href="#" className="nav-item">
+                  <span className="nav-icon">⚙</span>
+                  <span>Settings</span>
+                </a>
+      
+                <a href="#" className="nav-item">
+                  <span className="nav-icon">?</span>
+                  <span>Help</span>
+                </a>
+      
+                <button
+                  className="nav-item logout-button"
+                  onClick={async () => {
+                    try {
+                      await apiFetch('/api/auth/logout', {
+                        method: 'POST'
+                      });
+                    } finally {
+                      window.location.href = '/login';
+                    }
+                  }}
+                >
+                  <span className="nav-icon">↪</span>
+                  <span>Log Out</span>
+                </button>
+      
+              </nav>
+      
+              <div className="sidebar-message">
+      
+                <img
+                  src="/assets/dashboard-plant.png"
+                  alt=""
+                />
+      
+                <p>
+                  Small steps
+                  <br />
+                  today, big dreams
+                  <br />
+                  tomorrow.
+                </p>
+      
+              </div>
+      
+            </aside>
 
       {/* ================= MAIN ================= */}
 
@@ -354,28 +490,6 @@ export default function QuizPage() {
               priority
               className="quiz-hero-image"
             />
-
-            <div className="hero-copy">
-
-              <strong>
-                Think.
-                <br />
-                Choose.
-                <br />
-                Learn.
-                <br />
-                Grow!
-              </strong>
-
-            </div>
-
-            <div className="hero-quote">
-              “Good financial decisions
-              <br />
-              build a brighter
-              <br />
-              tomorrow.”
-            </div>
 
           </div>
 
@@ -721,131 +835,221 @@ export default function QuizPage() {
         }
 
 
-        /* ================= HEADER ================= */
+        /* MAIN */
 
-        .quiz-header {
-          position: fixed;
-          top: 0;
-          left: 280px;
-          right: 0;
-          height: 72px;
-          background: #ffffff;
-          border-bottom: 1px solid #e5eaf2;
+        .dashboard-main {
+          width: calc(100% - 280px);
+          margin-left: 280px;
+          min-height: 100vh;
+        }
+
+        .topbar {
+          height: 88px;
+          border-bottom: 1px solid #e7edf5;
           display: flex;
           align-items: center;
           justify-content: space-between;
           padding: 0 32px;
-          z-index: 100;
+          background: white;
         }
 
-        .quiz-search {
-          width: 560px;
-          height: 44px;
-          background: #f4f7fb;
+        .search-box {
+          width: 515px;
+          height: 48px;
           border-radius: 12px;
+          background: #f3f6fb;
           display: flex;
           align-items: center;
+          padding: 0 16px;
           gap: 12px;
-          padding: 0 18px;
         }
 
-        .quiz-search input {
-          width: 100%;
+        .search-box span {
+          font-size: 29px;
+          color: #5b6b91;
+          transform: rotate(-20deg);
+        }
+
+        .search-box input {
           border: none;
           outline: none;
           background: transparent;
-          color: #344879;
-          font-size: 15px;
+          width: 100%;
+          font-size: 16px;
+          color: #18245d;
         }
 
-        .quiz-search input::placeholder {
-          color: #7180a3;
+        .search-box input::placeholder {
+          color: #8290ad;
         }
 
-        .search-icon {
-          font-size: 24px;
-          color: #344879;
-        }
-
-        .quiz-profile-area {
+        .topbar-right {
           display: flex;
           align-items: center;
-          gap: 22px;
+          gap: 20px;
         }
 
-        .notification {
+        /* Working profile menu pattern used by the Lessons page */
+        .profile-area {
           position: relative;
-          width: 32px;
-          height: 36px;
-          border: none;
-          background: transparent;
-          color: #344879;
-          font-size: 27px;
-          cursor: pointer;
-        }
-
-        .notification span {
-          position: absolute;
-          width: 8px;
-          height: 8px;
-          background: #ff4d4d;
-          border-radius: 50%;
-          top: 2px;
-          right: 0;
-        }
-
-        .top-divider {
-          width: 1px;
-          height: 42px;
-          background: #e3e8f0;
+          display: flex;
+          align-items: center;
+          gap: 20px;
         }
 
         .profile {
           display: flex;
           align-items: center;
           gap: 12px;
+          min-width: 175px;
+        }
+
+        .profile-toggle {
+          border: 0;
+          background: transparent;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
+          padding: 4px;
+          border-radius: 12px;
+        }
+
+        .profile-toggle:hover {
+          background: #f2faf7;
+        }
+
+        .profile-dropdown {
+          position: absolute;
+          right: 0;
+          top: calc(100% + 6px);
+          min-width: 190px;
+          padding: 8px;
+          background: #ffffff;
+          border: 1px solid #e1e8f0;
+          border-radius: 14px;
+          box-shadow: 0 12px 32px rgba(25, 45, 80, 0.16);
+          z-index: 1200;
+        }
+
+        .profile-menu-item {
+          display: block;
+          width: 100%;
+          padding: 11px 12px;
+          border: 0;
+          border-radius: 9px;
+          background: transparent;
+          color: #17215d;
+          font: inherit;
+          text-align: left;
+          text-decoration: none;
+          cursor: pointer;
+        }
+
+        .profile-menu-item:hover {
+          background: #eef8f5;
+        }
+
+        .profile-menu-logout {
+          color: #c62828;
+        }
+
+        .profile-text {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .profile-text strong {
+          font-size: 16px;
+          color: #11195b;
+        }
+
+        .profile-text small {
+          color: #58688e;
+          font-size: 14px;
+        }
+
+        .arrow {
+          margin-left: auto;
+          font-size: 20px;
+        }
+
+        .notification-button {
+          position: relative;
+          border: none;
+          background: none;
+          font-size: 29px;
+          color: #46577d;
+          cursor: pointer;
+        }
+
+        .notification-dot {
+          position: absolute;
+          width: 9px;
+          height: 9px;
+          background: #f0444a;
+          border-radius: 50%;
+          top: 2px;
+          right: 0;
+          border: 2px solid white;
+        }
+
+        .topbar-divider {
+          width: 1px;
+          height: 42px;
+          background: #e2e7ef;
+        }
+
+        .profile-mini {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          min-width: 175px;
         }
 
         .avatar {
           width: 44px;
           height: 44px;
           border-radius: 50%;
-          background: #05a779;
+          background: #0c9a72;
           color: white;
           display: flex;
-          align-items: center;
           justify-content: center;
+          align-items: center;
+          font-size: 17px;
           font-weight: 700;
-          font-size: 18px;
         }
 
-        .profile-text {
+        .profile-mini div:nth-child(2) {
           display: flex;
           flex-direction: column;
-          gap: 2px;
+          gap: 3px;
         }
 
-        .profile-text strong {
-          font-size: 15px;
-          color: #10165c;
+        .profile-mini strong {
+          font-size: 16px;
+          color: #11195b;
         }
 
-        .profile-text small {
-          font-size: 13px;
-          color: #52638d;
+        .profile-mini span {
+          font-size: 14px;
+          color: #59698e;
         }
 
         .profile-arrow {
-          margin-left: 18px;
-          font-size: 20px;
+          margin-left: auto;
+          font-size: 20px !important;
         }
+
 
 
         /* SIDEBAR */
 
         .sidebar {
           width: 280px;
-          min-height: 100vh;
+          height: 100vh;
+          min-height: 0;
           border-right: 1px solid #e7edf5;
           background: #ffffff;
           position: fixed;
@@ -854,7 +1058,33 @@ export default function QuizPage() {
           bottom: 0;
           display: flex;
           flex-direction: column;
+          overflow-y: auto;
+          overflow-x: hidden;
+          overscroll-behavior: contain;
+          scrollbar-width: thin;
+          scrollbar-color: #cbd5e1 transparent;
           z-index: 20;
+        }
+
+        .sidebar::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 10px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .logo-area,
+        .main-nav,
+        .sidebar-divider,
+        .secondary-nav,
+        .sidebar-message {
+          flex-shrink: 0;
         }
 
         .logo-area {
@@ -1007,7 +1237,7 @@ export default function QuizPage() {
           color: #05a779;
           font-size: 22px;
           font-weight: 700;
-        }
+                  }
 
         .course-title h1 {
           margin: 0;
@@ -1025,22 +1255,33 @@ export default function QuizPage() {
 
         /* ================= QUIZ HERO ================= */
 
-        .quiz-hero {
-          position: absolute;
-          top: 0;
-          right: 0;
-          width: 55%;
-          height: 172px;
-          border-radius: 16px;
-          overflow: hidden;
-          background: #e0f8ef;
-        }
+.quiz-hero {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 42%;
+  height: 172px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #e0f8ef;
+}
 
-        .quiz-hero-image {
-          object-fit: cover;
-          object-position: center;
-        }
+.quiz-hero-image {
+  position: absolute !important;
 
+  width: 100% !important;
+  height: 115% !important;
+
+  right: 0 !important;
+  left: auto !important;
+  top: -7% !important;
+
+  object-fit: cover !important;
+  object-position: right center !important;
+
+  transform: scale(1.05);
+  transform-origin: right center;
+}
         .hero-copy {
           position: absolute;
           left: 8%;
@@ -2320,6 +2561,702 @@ export default function QuizPage() {
 
           .main-nav .nav-icon {
             font-size: 17px;
+          }
+        }
+
+
+        /* =========================================================
+           FINAL STUDENT UI OVERRIDES
+        ========================================================= */
+
+        .quiz-hero-image {
+          object-fit: cover;
+          object-position: center;
+        }
+
+        @media (min-width: 701px) {
+          .sidebar {
+            height: 100vh;
+            height: 100dvh;
+            max-height: 100dvh;
+            min-height: 0;
+            overflow-y: scroll !important;
+            overflow-x: hidden !important;
+            overscroll-behavior-y: contain;
+            scrollbar-width: thin;
+            scrollbar-color: #cbd5e1 transparent;
+          }
+
+          .sidebar > * {
+            flex-shrink: 0;
+          }
+        }
+
+        @media (max-width: 700px) {
+          html,
+          body {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: hidden;
+          }
+
+          .quiz-page {
+            width: 100%;
+            min-width: 0;
+            min-height: 100vh;
+            padding-bottom: 72px;
+            overflow-x: hidden;
+          }
+
+          /* Updated Dashboard-style mobile header */
+          .topbar {
+            position: fixed;
+            left: 0;
+            right: 0;
+            top: 0;
+            width: 100%;
+            height: 64px;
+            padding: 0 12px;
+            gap: 8px;
+            z-index: 2000;
+          }
+
+          .search-box {
+            flex: 1;
+            width: auto;
+            min-width: 0;
+            height: 42px;
+            padding: 0 10px;
+            gap: 7px;
+          }
+
+          .search-box input {
+            min-width: 0;
+            width: 100%;
+            font-size: 11px;
+          }
+
+          .search-box span {
+            flex-shrink: 0;
+            font-size: 20px;
+          }
+
+          .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-shrink: 0;
+          }
+
+          .notification-button {
+            display: inline-flex;
+            width: 38px;
+            height: 38px;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+          }
+
+          .topbar-divider {
+            display: block;
+            height: 34px;
+          }
+
+          .profile-area {
+            display: flex;
+            flex: 0 0 auto;
+          }
+
+          .profile-toggle {
+            min-width: 0 !important;
+            gap: 6px !important;
+            padding: 2px !important;
+          }
+
+          .profile-toggle .avatar {
+            width: 38px;
+            height: 38px;
+            flex: 0 0 38px;
+            font-size: 15px;
+          }
+
+          .profile-toggle .profile-text {
+            display: none;
+          }
+
+          .profile-toggle .arrow {
+            margin-left: 0;
+            font-size: 16px;
+          }
+
+          .profile-dropdown {
+            position: fixed;
+            top: 72px;
+            right: 10px;
+            min-width: 190px;
+            z-index: 4000;
+          }
+
+          /* Updated Dashboard-style mobile bottom navigation */
+          .sidebar {
+            position: fixed;
+            left: 0;
+            right: 0;
+            top: auto;
+            bottom: 0;
+            width: 100%;
+            height: 66px;
+            min-height: 66px;
+            max-height: 66px;
+            overflow: hidden;
+            border-right: 0;
+            border-top: 1px solid #e4eaf2;
+            background: #ffffff;
+            box-shadow: 0 -8px 25px rgba(34, 68, 100, 0.08);
+            display: block;
+            z-index: 3000;
+          }
+
+          .logo-area,
+          .sidebar-divider,
+          .secondary-nav,
+          .sidebar-message {
+            display: none;
+          }
+
+          .main-nav {
+            width: 100%;
+            height: 100%;
+            padding: 4px 3px;
+            display: flex;
+            align-items: stretch;
+            justify-content: space-between;
+            gap: 0;
+            overflow: hidden;
+          }
+
+          .main-nav .nav-item {
+            flex: 1 1 0;
+            width: auto;
+            min-width: 0;
+            height: 58px;
+            margin: 0;
+            padding: 4px 1px;
+            border-radius: 9px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            font-size: 9px;
+            line-height: 1.1;
+            text-align: center;
+          }
+
+          .main-nav .nav-item span:last-child {
+            display: block;
+            white-space: nowrap;
+          }
+
+          .main-nav .nav-icon {
+            width: auto;
+            min-width: 0;
+            font-size: 19px;
+            line-height: 20px;
+          }
+
+          .quiz-main {
+            margin-left: 0;
+            width: 100%;
+            max-width: 100%;
+            min-height: calc(100vh - 66px);
+            padding: 76px 12px 24px;
+            overflow-x: hidden;
+          }
+
+          /* No text overlay on quiz hero */
+          .hero-copy,
+          .hero-quote {
+            display: none !important;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .quiz-hero {
+            position: relative;
+            top: auto;
+            right: auto;
+            width: 100%;
+            height: 145px;
+            margin-top: 13px;
+            border-radius: 12px;
+          }
+
+          .quiz-hero-image {
+            position: absolute !important;
+            inset: 0;
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover;
+            object-position: center;
+          }
+        }
+
+
+        /* =========================================================
+           FINAL DASHBOARD HEADER + SIDEBAR RESPONSIVE OVERRIDE
+           Uses the same responsive behavior as the Student Dashboard.
+        ========================================================= */
+
+        @media (max-width: 1100px) {
+          .sidebar {
+            width: 210px;
+          }
+
+          .topbar {
+            padding: 0 20px;
+          }
+
+          .dashboard-main,
+          .quiz-main {
+            margin-left: 210px;
+          }
+
+          .quiz-main {
+            padding-left: 20px;
+            padding-right: 20px;
+          }
+
+          .search-box {
+            width: min(480px, 55vw);
+          }
+        }
+
+        @media (max-width: 800px) {
+          .sidebar {
+            width: 76px;
+          }
+
+          .logo-area {
+            padding: 12px 8px;
+            justify-content: center;
+          }
+
+          .logo {
+            width: 48px;
+            height: 48px;
+            object-fit: cover;
+            object-position: left;
+          }
+
+          .nav-item {
+            justify-content: center;
+            padding: 0;
+            gap: 0;
+          }
+
+          .nav-item span:last-child {
+            display: none;
+          }
+
+          .sidebar-message {
+            display: none;
+          }
+
+          .dashboard-main,
+          .quiz-main {
+            margin-left: 76px;
+          }
+        }
+
+        @media (max-width: 700px) {
+          .quiz-page {
+            width: 100%;
+            min-width: 0;
+            min-height: 100vh;
+            overflow-x: hidden;
+            padding-bottom: 72px;
+          }
+
+          /* Same Dashboard mobile header */
+          .topbar {
+            position: sticky;
+            top: 0;
+            left: 0;
+            right: 0;
+            width: 100%;
+            height: 64px;
+            padding: 0 12px;
+            gap: 8px;
+            z-index: 2000;
+          }
+
+          .search-box {
+            flex: 1;
+            width: auto;
+            min-width: 0;
+            height: 42px;
+            padding: 0 11px;
+            gap: 7px;
+          }
+
+          .search-box span {
+            font-size: 22px;
+            flex-shrink: 0;
+          }
+
+          .search-box input {
+            min-width: 0;
+            font-size: 12px;
+          }
+
+          .topbar-right {
+            display: flex;
+            align-items: center;
+            flex-shrink: 0;
+            gap: 0;
+          }
+
+          /* Keep the profile accessible on mobile just like Dashboard.
+             The notification bell stays hidden on the small header. */
+          .notification-button,
+          .topbar-divider {
+            display: none;
+          }
+
+          .profile-area {
+            display: flex;
+            flex: 0 0 auto;
+            gap: 0;
+          }
+
+          .profile-toggle {
+            min-width: 0 !important;
+            gap: 6px !important;
+            padding: 2px !important;
+          }
+
+          .profile-toggle .avatar {
+            width: 38px;
+            height: 38px;
+            flex: 0 0 38px;
+            font-size: 15px;
+          }
+
+          .profile-toggle .profile-text {
+            display: none;
+          }
+
+          .profile-toggle .arrow {
+            margin-left: 0;
+            font-size: 16px;
+          }
+
+          .profile-dropdown {
+            position: fixed;
+            top: 72px;
+            right: 10px;
+            min-width: 190px;
+          }
+
+          /* Same Dashboard mobile bottom navigation */
+          .sidebar {
+            position: fixed;
+            left: 0;
+            right: 0;
+            top: auto;
+            bottom: 0;
+            width: 100%;
+            height: 66px;
+            min-height: 66px;
+            max-height: 66px;
+            overflow: hidden;
+            border-right: 0;
+            border-top: 1px solid #e4eaf2;
+            background: #ffffff;
+            box-shadow: 0 -8px 25px rgba(34, 68, 100, 0.08);
+            display: block;
+            z-index: 3000;
+          }
+
+          .logo-area,
+          .sidebar-divider,
+          .secondary-nav,
+          .sidebar-message {
+            display: none;
+          }
+
+          .main-nav {
+            width: 100%;
+            height: 100%;
+            padding: 4px 3px;
+            display: flex;
+            align-items: stretch;
+            justify-content: space-between;
+            gap: 0;
+            overflow: hidden;
+          }
+
+          .main-nav .nav-item {
+            flex: 1 1 0;
+            width: auto;
+            min-width: 0;
+            height: 58px;
+            margin: 0;
+            padding: 4px 1px;
+            border-radius: 9px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            font-size: 9px;
+            line-height: 1.1;
+            text-align: center;
+          }
+
+          .main-nav .nav-item span:last-child {
+            display: block;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .main-nav .nav-icon {
+            width: auto;
+            min-width: 0;
+            font-size: 19px;
+            line-height: 20px;
+          }
+
+          .quiz-main {
+            margin-left: 0;
+            width: 100%;
+            max-width: 100%;
+            min-height: calc(100vh - 66px);
+            padding: 76px 12px 24px;
+            overflow-x: hidden;
+          }
+
+          /* Hero image has no text overlay. */
+          .quiz-hero .hero-copy,
+          .quiz-hero .hero-quote {
+            display: none !important;
+          }
+        }
+
+
+        /* =========================================================
+           FINAL DESKTOP / TABLET HEADER + HERO IMAGE OVERRIDES
+           Applied last so they override older quiz-header/quiz-search rules.
+        ========================================================= */
+                @media (min-width: 1101px) {
+          .topbar {
+            position: fixed;
+            top: 0;
+            left: 280px;
+            right: 0;
+            width: auto;
+            height: 88px;
+            z-index: 2000;
+          }
+
+          .search-box {
+            width: 515px;
+            height: 48px;
+            flex-shrink: 0;
+          }
+
+          .quiz-main {
+            margin-left: 280px;
+            padding: 108px 32px 40px;
+          }
+
+          .quiz-hero {
+            width: 48%;
+            height: 172px;
+            right: 0;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+
+          .quiz-hero-image {
+            position: absolute !important;
+            inset: 0;
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: contain !important;
+            object-position: center;
+            padding: 6px 18px;
+          }
+        }
+
+        @media (min-width: 701px) and (max-width: 1100px) {
+          .topbar {
+            position: fixed;
+            top: 0;
+            left: 210px;
+            right: 0;
+            width: auto;
+            height: 88px;
+            padding: 0 20px;
+            z-index: 2000;
+          }
+
+          .search-box {
+            width: min(480px, 55vw);
+            flex-shrink: 0;
+          }
+
+          .quiz-main {
+            margin-left: 210px;
+            padding: 108px 20px 40px;
+          }
+
+          .quiz-hero {
+            width: 50%;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+
+          .quiz-hero-image {
+            position: absolute !important;
+            inset: 0;
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: contain !important;
+            object-position: center;
+            padding: 6px 12px;
+          }
+        }
+
+        /* =========================================================
+           FINAL MOBILE HEADER + HERO OVERRIDES
+        ========================================================= */
+
+        @media (max-width: 700px) {
+          .topbar {
+            position: fixed;
+            left: 0;
+            right: 0;
+            top: 0;
+            width: 100%;
+            height: 64px;
+            padding: 0 12px;
+            gap: 8px;
+            z-index: 3000;
+          }
+
+          .search-box {
+            flex: 1;
+            width: auto;
+            min-width: 0;
+            height: 42px;
+            padding: 0 10px;
+            gap: 7px;
+          }
+
+          .search-box input {
+            min-width: 0;
+            width: 100%;
+            font-size: 11px;
+          }
+
+          .topbar-right {
+            display: flex;
+            flex-shrink: 0;
+            gap: 0;
+          }
+
+          .notification-button,
+          .topbar-divider {
+            display: none;
+          }
+
+          .profile-area {
+            display: flex;
+            flex-shrink: 0;
+          }
+
+          .profile-toggle {
+            min-width: 0;
+            gap: 0;
+            padding: 2px;
+          }
+
+          .profile-toggle .avatar {
+            width: 38px;
+            height: 38px;
+            flex: 0 0 38px;
+            font-size: 15px;
+          }
+
+          .profile-toggle .profile-text,
+          .profile-toggle .arrow {
+            display: none;
+          }
+
+          .profile-dropdown {
+            position: fixed;
+            top: 70px;
+            right: 10px;
+            width: min(240px, calc(100vw - 20px));
+            z-index: 4000;
+          }
+
+          .quiz-main {
+            margin-left: 0;
+            width: 100%;
+            max-width: 100%;
+            min-height: calc(100vh - 66px);
+            padding: 76px 12px 24px;
+            overflow-x: hidden;
+          }
+
+          .quiz-course-header {
+            width: 100%;
+            min-height: 0;
+            position: relative;
+          }
+
+          .quiz-hero {
+            position: relative;
+            top: auto;
+            right: auto;
+            left: auto;
+            width: 100%;
+            height: 132px;
+            margin: 13px 0 0;
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+
+          .quiz-hero-image {
+            position: absolute !important;
+            inset: 0;
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: contain !important;
+            object-position: center;
+            padding: 4px 10px;
+          }
+        }
+
+        @media (max-width: 380px) {
+          .quiz-hero {
+            height: 118px;
+          }
+
+          .quiz-hero-image {
+            padding: 4px 8px;
           }
         }
 
