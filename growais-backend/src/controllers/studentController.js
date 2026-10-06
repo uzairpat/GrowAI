@@ -1,5 +1,99 @@
 const pool = require('../db/pool');
 
+// `student_progress` is a denormalized summary used by teacher views. Keep it
+// synchronized from the source-of-truth attempt/progress tables whenever a
+// student completes learning content.
+const refreshStudentProgress = async (client, studentId) => {
+  const result = await client.query(
+    `
+      WITH totals AS (
+        SELECT
+          (SELECT COUNT(*)::int FROM lessons WHERE is_published = TRUE) AS lesson_total,
+          (SELECT COUNT(*)::int FROM quizzes WHERE is_published = TRUE) AS quiz_total,
+          (SELECT COUNT(*)::int FROM scenarios WHERE is_published = TRUE) AS scenario_total
+      ),
+      completed AS (
+        SELECT
+          (SELECT COUNT(*)::int
+             FROM lesson_progress
+            WHERE student_id = $1 AND status = 'completed') AS lessons_completed,
+          (SELECT COUNT(DISTINCT qa.quiz_id)::int
+             FROM quiz_attempts qa
+             JOIN quizzes q ON q.id = qa.quiz_id AND q.is_published = TRUE
+            WHERE qa.student_id = $1 AND qa.completed_at IS NOT NULL) AS quizzes_completed,
+          (SELECT COUNT(DISTINCT sa.scenario_id)::int
+             FROM scenario_attempts sa
+             JOIN scenarios s ON s.id = sa.scenario_id AND s.is_published = TRUE
+            WHERE sa.student_id = $1 AND sa.completed = TRUE) AS scenarios_completed,
+          (SELECT COALESCE(ROUND(AVG(
+              CASE
+                WHEN qa.total_points > 0
+                  THEN (qa.earned_points::numeric / qa.total_points::numeric) * 100
+                ELSE 0
+              END
+            ), 2), 0)
+             FROM quiz_attempts qa
+            WHERE qa.student_id = $1 AND qa.completed_at IS NOT NULL) AS average_quiz_score,
+          (SELECT COALESCE(SUM(COALESCE(qa.earned_points, 0)), 0)
+             FROM quiz_attempts qa
+            WHERE qa.student_id = $1 AND qa.completed_at IS NOT NULL)
+          +
+          (SELECT COALESCE(SUM(GREATEST(COALESCE(sa.score, 0), 0)), 0)
+             FROM scenario_attempts sa
+            WHERE sa.student_id = $1 AND sa.completed = TRUE) AS total_points
+      )
+      SELECT
+        completed.*,
+        CASE
+          WHEN totals.lesson_total + totals.quiz_total + totals.scenario_total = 0 THEN 0
+          ELSE ROUND((
+            LEAST(completed.lessons_completed, totals.lesson_total)::numeric
+            + LEAST(completed.quizzes_completed, totals.quiz_total)::numeric
+            + LEAST(completed.scenarios_completed, totals.scenario_total)::numeric
+          ) / (totals.lesson_total + totals.quiz_total + totals.scenario_total) * 100, 2)
+        END AS overall_progress
+      FROM totals, completed
+    `,
+    [studentId]
+  );
+
+  const summary = result.rows[0];
+
+  await client.query(
+    `
+      INSERT INTO student_progress (
+        student_id,
+        lessons_completed,
+        quizzes_completed,
+        scenarios_completed,
+        total_points,
+        average_quiz_score,
+        overall_progress,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      ON CONFLICT (student_id)
+      DO UPDATE SET
+        lessons_completed = EXCLUDED.lessons_completed,
+        quizzes_completed = EXCLUDED.quizzes_completed,
+        scenarios_completed = EXCLUDED.scenarios_completed,
+        total_points = EXCLUDED.total_points,
+        average_quiz_score = EXCLUDED.average_quiz_score,
+        overall_progress = EXCLUDED.overall_progress,
+        updated_at = EXCLUDED.updated_at
+    `,
+    [
+      studentId,
+      Number(summary.lessons_completed || 0),
+      Number(summary.quizzes_completed || 0),
+      Number(summary.scenarios_completed || 0),
+      Number(summary.total_points || 0),
+      Number(summary.average_quiz_score || 0),
+      Number(summary.overall_progress || 0)
+    ]
+  );
+};
+
 // Get the logged-in student's progress for one lesson
 const getLessonProgress = async (req, res) => {
   try {
@@ -10,6 +104,15 @@ const getLessonProgress = async (req, res) => {
       return res.status(400).json({
         message: 'Invalid lesson ID.'
       });
+    }
+
+    const lessonResult = await pool.query(
+      `SELECT id FROM lessons WHERE id = $1 AND is_published = TRUE LIMIT 1`,
+      [lessonId]
+    );
+
+    if (!lessonResult.rowCount) {
+      return res.status(404).json({ message: 'Lesson not found.' });
     }
 
     const result = await pool.query(
@@ -94,6 +197,16 @@ const saveLessonProgress = async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    const lessonResult = await client.query(
+      `SELECT id FROM lessons WHERE id = $1 AND is_published = TRUE LIMIT 1`,
+      [lessonId]
+    );
+
+    if (!lessonResult.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Lesson not found.' });
+    }
+
     const existing = await client.query(
       `SELECT id
        FROM lesson_progress
@@ -172,6 +285,8 @@ const saveLessonProgress = async (req, res) => {
       );
     }
 
+    await refreshStudentProgress(client, studentId);
+
     await client.query('COMMIT');
 
     return res.json({
@@ -213,6 +328,7 @@ const getQuiz = async (req, res) => {
          is_published
        FROM quizzes
        WHERE id = $1
+         AND is_published = TRUE
        LIMIT 1`,
       [quizId]
     );
@@ -322,6 +438,7 @@ const saveQuizAttempt = async (req, res) => {
          passing_score
        FROM quizzes
        WHERE id = $1
+         AND is_published = TRUE
        LIMIT 1`,
       [quizId]
     );
@@ -370,6 +487,26 @@ const saveQuizAttempt = async (req, res) => {
     }
 
     const answerMap = new Map();
+    const validQuestionIds = new Set(
+      questionsResult.rows.map((question) => Number(question.question_id))
+    );
+    const optionIdsByQuestion = new Map();
+
+    const optionsResult = await client.query(
+      `
+        SELECT question_id, id
+        FROM quiz_options
+        WHERE question_id = ANY($1::bigint[])
+      `,
+      [Array.from(validQuestionIds)]
+    );
+
+    for (const option of optionsResult.rows) {
+      const questionId = Number(option.question_id);
+      const options = optionIdsByQuestion.get(questionId) || new Set();
+      options.add(Number(option.id));
+      optionIdsByQuestion.set(questionId, options);
+    }
 
     for (const answer of answers) {
       const questionId = Number(answer.question_id);
@@ -377,12 +514,15 @@ const saveQuizAttempt = async (req, res) => {
 
       if (
         !Number.isInteger(questionId) ||
-        !Number.isInteger(optionId)
+        !Number.isInteger(optionId) ||
+        !validQuestionIds.has(questionId) ||
+        !optionIdsByQuestion.get(questionId)?.has(optionId) ||
+        answerMap.has(questionId)
       ) {
         await client.query('ROLLBACK');
 
         return res.status(400).json({
-          message: 'Invalid quiz answer.'
+          message: 'Answers must include each quiz question once with one of its options.'
         });
       }
 
@@ -399,9 +539,9 @@ const saveQuizAttempt = async (req, res) => {
       );
 
       if (!selectedOptionId) {
-        throw new Error(
-          'Missing answer for a quiz question.'
-        );
+        const error = new Error('Missing answer for a quiz question.');
+        error.statusCode = 400;
+        throw error;
       }
 
       const questionPoints = Number(
@@ -475,7 +615,7 @@ const saveQuizAttempt = async (req, res) => {
         quizId,
         studentId,
         score,
-        questionsResult.rows.length,
+        totalPoints,
         earnedPoints,
         passed
       ]
@@ -511,6 +651,8 @@ const saveQuizAttempt = async (req, res) => {
         ]
       );
     }
+
+    await refreshStudentProgress(client, studentId);
 
     await client.query('COMMIT');
 
@@ -907,6 +1049,8 @@ const saveScenarioAttempt = async (req, res) => {
       );
     }
 
+    await refreshStudentProgress(client, studentId);
+
     await client.query("COMMIT");
 
     return res.status(201).json({
@@ -1032,6 +1176,183 @@ const getLatestScenarioAttempt = async (req, res) => {
   }
 };
 
+const goalFromRow = (row) => ({
+  id: Number(row.id),
+  title: row.title,
+  description: row.description || '',
+  target_amount: Number(row.target_amount || 0),
+  current_amount: Number(row.current_amount || 0),
+  target_date: row.target_date,
+  status: row.status,
+  created_at: row.created_at,
+  updated_at: row.updated_at
+});
+
+const validateGoal = (input, { partial = false } = {}) => {
+  const updates = {};
+
+  if (!partial || Object.prototype.hasOwnProperty.call(input, 'title')) {
+    const title = String(input.title || '').trim();
+    if (!title || title.length > 200) {
+      return { error: 'Goal title is required and must be 200 characters or fewer.' };
+    }
+    updates.title = title;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'description')) {
+    const description = String(input.description || '').trim();
+    if (description.length > 5000) {
+      return { error: 'Goal description must be 5,000 characters or fewer.' };
+    }
+    updates.description = description || null;
+  }
+
+  for (const [inputKey, column] of [
+    ['targetAmount', 'target_amount'],
+    ['currentAmount', 'current_amount']
+  ]) {
+    if (!partial || Object.prototype.hasOwnProperty.call(input, inputKey)) {
+      const value = inputKey === 'currentAmount' && !Object.prototype.hasOwnProperty.call(input, inputKey)
+        ? 0
+        : Number(input[inputKey]);
+      if (!Number.isFinite(value) || value < 0 || (inputKey === 'targetAmount' && value <= 0)) {
+        return { error: inputKey === 'targetAmount' ? 'Target amount must be greater than zero.' : 'Current amount cannot be negative.' };
+      }
+      updates[column] = value;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'targetDate')) {
+    if (!input.targetDate) {
+      updates.target_date = null;
+    } else if (Number.isNaN(new Date(input.targetDate).getTime())) {
+      return { error: 'Target date is invalid.' };
+    } else {
+      updates.target_date = input.targetDate;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(input, 'status')) {
+    if (!['active', 'completed', 'cancelled'].includes(input.status)) {
+      return { error: 'Goal status is invalid.' };
+    }
+    updates.status = input.status;
+  }
+
+  return { updates };
+};
+
+const getStudentGoals = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+        SELECT id, title, description, target_amount, current_amount,
+               target_date, status, created_at, updated_at
+        FROM goals
+        WHERE student_id = $1
+        ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END,
+                 updated_at DESC, id DESC
+      `,
+      [req.user.id]
+    );
+
+    return res.json({ goals: result.rows.map(goalFromRow) });
+  } catch (error) {
+    console.error('Get student goals error:', error);
+    return res.status(500).json({ message: 'Unable to load goals.' });
+  }
+};
+
+const createStudentGoal = async (req, res) => {
+  const { updates, error } = validateGoal(req.body || {});
+  if (error) return res.status(400).json({ message: error });
+
+  try {
+    const result = await pool.query(
+      `
+        INSERT INTO goals (
+          student_id, title, description, target_amount, current_amount,
+          target_date, status
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 'active')
+        RETURNING id, title, description, target_amount, current_amount,
+                  target_date, status, created_at, updated_at
+      `,
+      [
+        req.user.id,
+        updates.title,
+        updates.description || null,
+        updates.target_amount,
+        updates.current_amount || 0,
+        updates.target_date || null
+      ]
+    );
+
+    return res.status(201).json({ goal: goalFromRow(result.rows[0]) });
+  } catch (caughtError) {
+    console.error('Create student goal error:', caughtError);
+    return res.status(500).json({ message: 'Unable to create goal.' });
+  }
+};
+
+const updateStudentGoal = async (req, res) => {
+  const goalId = Number(req.params.goalId);
+  if (!Number.isInteger(goalId) || goalId <= 0) {
+    return res.status(400).json({ message: 'Invalid goal ID.' });
+  }
+
+  const { updates, error } = validateGoal(req.body || {}, { partial: true });
+  if (error) return res.status(400).json({ message: error });
+  if (!Object.keys(updates).length) {
+    return res.status(400).json({ message: 'No goal changes were provided.' });
+  }
+
+  try {
+    const existingResult = await pool.query(
+      `SELECT target_amount, current_amount FROM goals WHERE id = $1 AND student_id = $2 LIMIT 1`,
+      [goalId, req.user.id]
+    );
+
+    if (!existingResult.rowCount) {
+      return res.status(404).json({ message: 'Goal not found.' });
+    }
+
+    const targetAmount = updates.target_amount ?? Number(existingResult.rows[0].target_amount);
+    const currentAmount = updates.current_amount ?? Number(existingResult.rows[0].current_amount);
+    if (currentAmount > targetAmount) {
+      return res.status(400).json({ message: 'Current amount cannot exceed the target amount.' });
+    }
+
+    const columns = Object.keys(updates);
+    const values = columns.map((column) => updates[column]);
+    const assignments = columns.map((column, index) => `${column} = $${index + 1}`);
+    values.push(goalId, req.user.id);
+
+    const result = await pool.query(
+      `
+        UPDATE goals
+        SET ${assignments.join(', ')},
+            status = CASE
+              WHEN current_amount >= target_amount THEN 'completed'
+              WHEN status = 'completed' THEN 'active'
+              ELSE status
+            END,
+            updated_at = NOW()
+        WHERE id = $${values.length - 1}
+          AND student_id = $${values.length}
+        RETURNING id, title, description, target_amount, current_amount,
+                  target_date, status, created_at, updated_at
+      `,
+      values
+    );
+
+    return res.json({ goal: goalFromRow(result.rows[0]) });
+  } catch (caughtError) {
+    console.error('Update student goal error:', caughtError);
+    return res.status(500).json({ message: 'Unable to update goal.' });
+  }
+};
+
 module.exports = {
   getLessonProgress,
   saveLessonProgress,
@@ -1042,5 +1363,10 @@ module.exports = {
 
   getScenario,
   saveScenarioAttempt,
-  getLatestScenarioAttempt
+  getLatestScenarioAttempt,
+
+  getStudentGoals,
+  createStudentGoal,
+  updateStudentGoal
+  
 };

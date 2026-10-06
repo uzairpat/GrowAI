@@ -101,6 +101,21 @@ app.get('/api/health/db', async (req, res) => {
   }
 });
 
+// Keep operational errors JSON-shaped for the frontend and avoid Express's
+// default HTML error responses exposing implementation details.
+app.use((error, req, res, next) => {
+  if (res.headersSent) {
+    return next(error);
+  }
+
+  if (error?.message?.startsWith('CORS blocked origin:')) {
+    return res.status(403).json({ message: 'This origin is not allowed.' });
+  }
+
+  console.error('Unhandled request error:', error);
+  return res.status(500).json({ message: 'Unable to process this request.' });
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 GrowAIs backend running on http://localhost:${PORT}`);

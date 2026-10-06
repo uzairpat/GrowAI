@@ -13,57 +13,55 @@ type User = {
   full_name: string;
 };
 
-type GoalType = "savings" | "completion";
-
 type Goal = {
   id: number;
-  type: GoalType;
+  type: "savings";
   title: string;
   description: string;
-  targetAmount?: number;
-  savedAmount?: number;
+  targetAmount: number;
+  savedAmount: number;
+  status: "active" | "completed" | "cancelled";
+  createdAt: string;
   targetActivities?: number;
   completedActivities?: number;
-  active: boolean;
 };
 
-export default function GoalsPage() {
-  const defaultGoals: Goal[] = [
-    {
-      id: 1,
-      type: "savings",
-      title: "Save for New Headphones",
-      description:
-        "A pair of headphones for studying, online classes, and music.",
-      targetAmount: 1000,
-      savedAmount: 400,
-      active: true,
-    },
-    {
-      id: 2,
-      type: "completion",
-      title: "Complete My Learning Activities",
-      description:
-        "Finish lessons, quizzes, and scenarios to build my financial skills.",
-      targetActivities: 3,
-      completedActivities: 2,
-      active: false,
-    },
-  ];
+type ApiGoal = {
+  id: number;
+  title: string;
+  description: string;
+  target_amount: number;
+  current_amount: number;
+  status: Goal["status"];
+  created_at: string;
+};
 
-  const [goals, setGoals] = useState<Goal[]>(defaultGoals);
-  const [selectedGoalId, setSelectedGoalId] = useState(1);
+const toGoal = (goal: ApiGoal): Goal => ({
+  id: goal.id,
+  type: "savings",
+  title: goal.title,
+  description: goal.description || "A savings goal I want to reach.",
+  targetAmount: Number(goal.target_amount) || 0,
+  savedAmount: Number(goal.current_amount) || 0,
+  status: goal.status,
+  createdAt: goal.created_at,
+});
+
+export default function GoalsPage() {
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [selectedGoalId, setSelectedGoalId] = useState<number | null>(null);
   const [customAmount, setCustomAmount] = useState("");
   const [showEditGoal, setShowEditGoal] = useState(false);
   const [showAddGoal, setShowAddGoal] = useState(false);
-  const [goalLoaded, setGoalLoaded] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editTarget, setEditTarget] = useState("");
-  const [newGoalType, setNewGoalType] = useState<GoalType>("savings");
   const [newGoalTitle, setNewGoalTitle] = useState("");
   const [newGoalTarget, setNewGoalTarget] = useState("");
   const [user, setUser] = useState<User | null>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [goalError, setGoalError] = useState("");
+  const [goalsLoading, setGoalsLoading] = useState(true);
+  const [savingGoal, setSavingGoal] = useState(false);
 
   useEffect(() => {
     const loadUser = async () => {
@@ -85,76 +83,84 @@ export default function GoalsPage() {
   }, []);
 
   useEffect(() => {
-    const storedGoals = localStorage.getItem("growais_goals");
+    let cancelled = false;
 
-    if (storedGoals) {
+    const loadGoals = async () => {
       try {
-        const parsedGoals = JSON.parse(storedGoals);
+        const data = await apiFetch("/api/student/goals");
+        const loadedGoals: Goal[] = Array.isArray(data.goals)
+          ? (data.goals as ApiGoal[]).map((goal) => toGoal(goal))
+          : [];
 
-        if (Array.isArray(parsedGoals) && parsedGoals.length > 0) {
-          setGoals(parsedGoals);
-          const activeGoal = parsedGoals.find((goal: Goal) => goal.active);
-          setSelectedGoalId(activeGoal?.id ?? parsedGoals[0].id);
+        if (!cancelled) {
+          setGoals(loadedGoals);
+          setSelectedGoalId(loadedGoals.find((goal) => goal.status === "active")?.id ?? loadedGoals[0]?.id ?? null);
         }
-      } catch {
-        localStorage.removeItem("growais_goals");
+      } catch (error) {
+        if (!cancelled) {
+          setGoalError(error instanceof Error ? error.message : "Unable to load your goals.");
+        }
+      } finally {
+        if (!cancelled) setGoalsLoading(false);
       }
-    }
+    };
 
-    setGoalLoaded(true);
+    loadGoals();
+    return () => { cancelled = true; };
   }, []);
-
-  useEffect(() => {
-    if (!goalLoaded) return;
-    localStorage.setItem("growais_goals", JSON.stringify(goals));
-  }, [goals, goalLoaded]);
 
   const activeGoal =
     goals.find((goal) => goal.id === selectedGoalId) ?? goals[0];
 
-  const isSavingsGoal = activeGoal?.type === "savings";
+  const isSavingsGoal = true;
   const targetAmount = activeGoal?.targetAmount ?? 0;
   const savedAmount = activeGoal?.savedAmount ?? 0;
   const remaining = Math.max(targetAmount - savedAmount, 0);
+  const createdDate = activeGoal?.createdAt
+    ? new Date(activeGoal.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+    : "—";
 
   const progress = isSavingsGoal
     ? targetAmount > 0
       ? Math.min(Math.round((savedAmount / targetAmount) * 100), 100)
       : 0
-    : activeGoal?.targetActivities
-      ? Math.min(
-          Math.round(
-            ((activeGoal.completedActivities ?? 0) /
-              activeGoal.targetActivities) *
-              100
-          ),
-          100
-        )
-      : 0;
+    : 0;
 
-  const updateGoal = (id: number, updates: Partial<Goal>) => {
-    setGoals((currentGoals) =>
-      currentGoals.map((goal) =>
-        goal.id === id ? { ...goal, ...updates } : goal
-      )
-    );
+  const updateGoal = async (id: number, updates: Partial<Goal>) => {
+    setSavingGoal(true);
+    setGoalError("");
+
+    try {
+      const body: Record<string, unknown> = {};
+      if (updates.title !== undefined) body.title = updates.title;
+      if (updates.description !== undefined) body.description = updates.description;
+      if (updates.targetAmount !== undefined) body.targetAmount = updates.targetAmount;
+      if (updates.savedAmount !== undefined) body.currentAmount = updates.savedAmount;
+
+      const data = await apiFetch(`/api/student/goals/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      });
+
+      const updated = toGoal(data.goal);
+      setGoals((currentGoals) => currentGoals.map((goal) => goal.id === id ? updated : goal));
+      return true;
+    } catch (error) {
+      setGoalError(error instanceof Error ? error.message : "Unable to update your goal.");
+      return false;
+    } finally {
+      setSavingGoal(false);
+    }
   };
 
   const selectGoal = (id: number) => {
     setSelectedGoalId(id);
-
-    setGoals((currentGoals) =>
-      currentGoals.map((goal) => ({
-        ...goal,
-        active: goal.id === id,
-      }))
-    );
   };
 
   const addSaving = (amount: number) => {
     if (!activeGoal || !isSavingsGoal || amount <= 0) return;
 
-    updateGoal(activeGoal.id, {
+    void updateGoal(activeGoal.id, {
       savedAmount: Math.min(savedAmount + amount, targetAmount),
     });
   };
@@ -162,7 +168,7 @@ export default function GoalsPage() {
   const subtractSaving = (amount: number) => {
     if (!activeGoal || !isSavingsGoal || amount <= 0) return;
 
-    updateGoal(activeGoal.id, {
+    void updateGoal(activeGoal.id, {
       savedAmount: Math.max(savedAmount - amount, 0),
     });
   };
@@ -189,64 +195,52 @@ export default function GoalsPage() {
     setShowEditGoal(!showEditGoal);
   };
 
-  const saveGoalChanges = () => {
+  const saveGoalChanges = async () => {
     if (!activeGoal || !editTitle.trim()) return;
 
     const newTarget = Number(editTarget);
     if (!newTarget || newTarget <= 0) return;
 
-    if (activeGoal.type === "savings") {
-      updateGoal(activeGoal.id, {
-        title: editTitle.trim(),
-        targetAmount: newTarget,
-        savedAmount: Math.min(savedAmount, newTarget),
-      });
-    } else {
-      updateGoal(activeGoal.id, {
-        title: editTitle.trim(),
-        targetActivities: Math.round(newTarget),
-        completedActivities: Math.min(
-          activeGoal.completedActivities ?? 0,
-          Math.round(newTarget)
-        ),
-      });
-    }
+    const saved = await updateGoal(activeGoal.id, {
+      title: editTitle.trim(),
+      targetAmount: newTarget,
+      savedAmount: Math.min(savedAmount, newTarget),
+    });
 
-    setShowEditGoal(false);
+    if (saved) {
+      setShowEditGoal(false);
+    }
   };
 
-  const createGoal = () => {
+  const createGoal = async () => {
     if (!newGoalTitle.trim()) return;
 
     const target = Number(newGoalTarget);
     if (!target || target <= 0) return;
 
-    const newGoal: Goal =
-      newGoalType === "savings"
-        ? {
-            id: Date.now(),
-            type: "savings",
-            title: newGoalTitle.trim(),
-            description: "A new savings target I want to reach.",
-            targetAmount: target,
-            savedAmount: 0,
-            active: false,
-          }
-        : {
-            id: Date.now(),
-            type: "completion",
-            title: newGoalTitle.trim(),
-            description:
-              "Complete lessons, quizzes, and scenarios to keep learning.",
-            targetActivities: Math.round(target),
-            completedActivities: 0,
-            active: false,
-          };
-
-    setGoals((currentGoals) => [...currentGoals, newGoal]);
-    setNewGoalTitle("");
-    setNewGoalTarget("");
-    setShowAddGoal(false);
+    setSavingGoal(true);
+    setGoalError("");
+    try {
+      const data = await apiFetch("/api/student/goals", {
+        method: "POST",
+        body: JSON.stringify({
+          title: newGoalTitle.trim(),
+          description: "A savings target I want to reach.",
+          targetAmount: target,
+          currentAmount: 0,
+        }),
+      });
+      const newGoal = toGoal(data.goal);
+      setGoals((currentGoals) => [newGoal, ...currentGoals]);
+      setSelectedGoalId(newGoal.id);
+      setNewGoalTitle("");
+      setNewGoalTarget("");
+      setShowAddGoal(false);
+    } catch (error) {
+      setGoalError(error instanceof Error ? error.message : "Unable to create your goal.");
+    } finally {
+      setSavingGoal(false);
+    }
   };
 
   const studentName = user?.full_name || "Student";
@@ -547,27 +541,11 @@ export default function GoalsPage() {
               {showAddGoal && (
                 <div className="add-goal-box">
 
-                  <select
-                    value={newGoalType}
-                    onChange={(event) =>
-                      setNewGoalType(event.target.value as GoalType)
-                    }
-                  >
-                    <option value="savings">Savings Goal</option>
-                    <option value="completion">
-                      Learning Completion Goal
-                    </option>
-                  </select>
-
                   <input
                     type="text"
                     value={newGoalTitle}
                     onChange={(event) => setNewGoalTitle(event.target.value)}
-                    placeholder={
-                      newGoalType === "savings"
-                        ? "e.g. Save for a new phone"
-                        : "e.g. Finish this month's learning"
-                    }
+                    placeholder="e.g. Save for a new phone"
                   />
 
                   <input
@@ -575,19 +553,21 @@ export default function GoalsPage() {
                     min="1"
                     value={newGoalTarget}
                     onChange={(event) => setNewGoalTarget(event.target.value)}
-                    placeholder={
-                      newGoalType === "savings"
-                        ? "Target amount (HK$)"
-                        : "Number of activities"
-                    }
+                    placeholder="Target amount (HK$)"
                   />
 
-                  <button onClick={createGoal}>Create Goal</button>
+                  <button onClick={createGoal} disabled={savingGoal}>Create Goal</button>
 
                 </div>
               )}
 
               <div className="goal-list">
+
+                {goalsLoading && <p className="goal-state">Loading your goals…</p>}
+                {goalError && <p className="goal-state goal-state-error" role="alert">{goalError}</p>}
+                {!goalsLoading && !goalError && goals.length === 0 && (
+                  <p className="goal-state">No goals yet. Add a savings goal to get started.</p>
+                )}
 
                 {goals.map((goal) => {
                   const goalProgress =
@@ -621,16 +601,12 @@ export default function GoalsPage() {
                       }`}
                       onClick={() => selectGoal(goal.id)}
                     >
-                      <span className="goal-list-icon">
-                        {goal.type === "savings" ? "💰" : "📚"}
-                      </span>
+                      <span className="goal-list-icon">💰</span>
 
                       <span className="goal-list-content">
                         <strong>{goal.title}</strong>
                         <small>
-                          {goal.type === "savings"
-                            ? `HK$ ${(goal.savedAmount ?? 0).toLocaleString()} / HK$ ${(goal.targetAmount ?? 0).toLocaleString()}`
-                            : `${goal.completedActivities ?? 0} / ${goal.targetActivities ?? 0} activities`}
+                          {`HK$ ${(goal.savedAmount ?? 0).toLocaleString()} / HK$ ${(goal.targetAmount ?? 0).toLocaleString()}`}
                         </small>
                       </span>
 
@@ -658,12 +634,13 @@ export default function GoalsPage() {
                   <h2>
                     Current Goal
                   </h2>
-                  <span className="active-goal-badge">● Active</span>
+                  <span className="active-goal-badge">● {activeGoal?.status === "completed" ? "Completed" : "Active"}</span>
                 </div>
 
                 <button
                   className="edit-goal-button"
                   onClick={openEditGoal}
+                  disabled={!activeGoal || savingGoal}
                 >
                   ✎ &nbsp; Edit Goal
                 </button>
@@ -693,7 +670,7 @@ export default function GoalsPage() {
                     }
                   />
 
-                  <button onClick={saveGoalChanges}>
+                  <button onClick={saveGoalChanges} disabled={savingGoal}>
                     Save
                   </button>
 
@@ -867,15 +844,15 @@ export default function GoalsPage() {
                   <button
                     className="minus-button"
                     onClick={() => subtractSaving(50)}
-                    disabled={savedAmount <= 0}
+                    disabled={!activeGoal || savingGoal || savedAmount <= 0}
                   >
                     − HK$ 50
                   </button>
 
-                  <button onClick={() => addSaving(50)}>+ HK$ 50</button>
-                  <button onClick={() => addSaving(100)}>+ HK$ 100</button>
-                  <button onClick={() => addSaving(200)}>+ HK$ 200</button>
-                  <button onClick={() => addSaving(500)}>+ HK$ 500</button>
+                  <button onClick={() => addSaving(50)} disabled={!activeGoal || savingGoal}>+ HK$ 50</button>
+                  <button onClick={() => addSaving(100)} disabled={!activeGoal || savingGoal}>+ HK$ 100</button>
+                  <button onClick={() => addSaving(200)} disabled={!activeGoal || savingGoal}>+ HK$ 200</button>
+                  <button onClick={() => addSaving(500)} disabled={!activeGoal || savingGoal}>+ HK$ 500</button>
 
                   <div className="custom-saving">
                     <span>HK$</span>
@@ -891,7 +868,7 @@ export default function GoalsPage() {
                     />
                   </div>
 
-                  <button className="add-button" onClick={addCustomSaving}>
+                  <button className="add-button" onClick={addCustomSaving} disabled={!activeGoal || savingGoal}>
                     Add
                   </button>
 
@@ -975,24 +952,7 @@ export default function GoalsPage() {
                   </strong>
 
                   <span>
-                    18 Sep 2026
-                  </span>
-
-                </div>
-
-
-                <div className="timeline-item completed">
-
-                  <div className="timeline-circle">
-                    ✓
-                  </div>
-
-                  <strong>
-                    First HK$ 200 Saved
-                  </strong>
-
-                  <span>
-                    21 Sep 2026
+                    {createdDate}
                   </span>
 
                 </div>

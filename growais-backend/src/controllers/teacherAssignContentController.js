@@ -129,7 +129,7 @@ async function postTeacherAssignContent(req, res) {
     const classId = Number(req.body.classId);
     const contentType = String(req.body.contentType || '');
     const contentIds = Array.isArray(req.body.contentIds)
-      ? req.body.contentIds.map(Number).filter(Number.isInteger)
+      ? [...new Set(req.body.contentIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))]
       : [];
     const dueDate = req.body.dueDate || null;
     const sendNotification = Boolean(req.body.sendNotification);
@@ -144,6 +144,10 @@ async function postTeacherAssignContent(req, res) {
 
     if (!contentIds.length) {
       return res.status(400).json({ message: 'Select at least one content item.' });
+    }
+
+    if (dueDate && Number.isNaN(new Date(dueDate).getTime())) {
+      return res.status(400).json({ message: 'Enter a valid due date.' });
     }
 
     const teacherClass = await client.query(
@@ -195,6 +199,24 @@ async function postTeacherAssignContent(req, res) {
       });
     }
 
+    const duplicateResult = await client.query(
+      `
+        SELECT ${column} AS content_id
+        FROM teacher_assignments
+        WHERE teacher_id = $1
+          AND class_id = $2
+          AND ${column} = ANY($3::bigint[])
+      `,
+      [teacherId, classId, contentIds]
+    );
+
+    if (duplicateResult.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        message: 'One or more selected items are already assigned to this class.'
+      });
+    }
+
     const inserted = [];
 
     for (const contentId of contentIds) {
@@ -238,7 +260,7 @@ async function postTeacherAssignContent(req, res) {
             `
               INSERT INTO notifications (
                 user_id,
-                type,
+                notification_type,
                 title,
                 message
               )

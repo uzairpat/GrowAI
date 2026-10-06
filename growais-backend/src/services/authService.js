@@ -16,7 +16,12 @@ const registerUser = async ({
   password,
   fullName
 }) => {
-  if (!role || !username || !password || !fullName) {
+  const normalizedRole = String(role || '').trim().toLowerCase();
+  const normalizedUsername = String(username || '').trim();
+  const normalizedEmail = email ? String(email).trim().toLowerCase() : null;
+  const normalizedFullName = String(fullName || '').trim();
+
+  if (!normalizedRole || !normalizedUsername || !password || !normalizedFullName) {
     const error = new Error(
       'Role, username, password, and full name are required'
     );
@@ -24,8 +29,32 @@ const registerUser = async ({
     throw error;
   }
 
-  if (!['student', 'teacher'].includes(role)) {
+  if (!['student', 'teacher'].includes(normalizedRole)) {
     const error = new Error('Invalid registration role');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (normalizedUsername.length < 3 || normalizedUsername.length > 50) {
+    const error = new Error('Username must be between 3 and 50 characters');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (normalizedFullName.length > 150) {
+    const error = new Error('Full name must be 150 characters or fewer');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (typeof password !== 'string' || password.length < 8) {
+    const error = new Error('Password must be at least 8 characters');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (normalizedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    const error = new Error('Enter a valid email address');
     error.statusCode = 400;
     throw error;
   }
@@ -37,7 +66,7 @@ const registerUser = async ({
     WHERE username = $1
        OR ($2::text IS NOT NULL AND email = $2)
     `,
-    [username, email || null]
+    [normalizedUsername, normalizedEmail]
   );
 
   if (existingUser.rows.length > 0) {
@@ -74,17 +103,17 @@ const registerUser = async ({
         created_at
       `,
       [
-        role,
-        username,
-        email || null,
+        normalizedRole,
+        normalizedUsername,
+        normalizedEmail,
         passwordHash,
-        fullName
+        normalizedFullName
       ]
     );
 
     const user = result.rows[0];
 
-    if (role === 'student') {
+    if (normalizedRole === 'student') {
       await client.query(
         `
         INSERT INTO student_profiles (user_id)
@@ -102,7 +131,7 @@ const registerUser = async ({
       );
     }
 
-    if (role === 'teacher') {
+    if (normalizedRole === 'teacher') {
       await client.query(
         `
         INSERT INTO teacher_profiles (user_id)
@@ -125,7 +154,9 @@ const registerUser = async ({
 
 
 const loginUser = async ({ login, password }) => {
-  if (!login || !password) {
+  const normalizedLogin = String(login || '').trim();
+
+  if (!normalizedLogin || !password) {
     const error = new Error('Username/email and password are required');
     error.statusCode = 400;
     throw error;
@@ -147,7 +178,7 @@ const loginUser = async ({ login, password }) => {
        OR email = $1
     LIMIT 1
     `,
-    [login]
+    [normalizedLogin]
   );
 
   if (result.rows.length === 0) {

@@ -1,511 +1,251 @@
 const pool = require('../db/pool');
 
-async function hasTable(tableName) {
-  const result = await pool.query(
-    `
-      SELECT to_regclass($1) IS NOT NULL AS exists
-    `,
-    [`public.${tableName}`]
-  );
-
-  return Boolean(result.rows[0]?.exists);
-}
-
-async function hasColumn(tableName, columnName) {
-  const result = await pool.query(
-    `
-      SELECT EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = $1
-          AND column_name = $2
-      ) AS exists
-    `,
-    [tableName, columnName]
-  );
-
-  return Boolean(result.rows[0]?.exists);
-}
-
-async function getTeacherClassQuery(teacherId, { includeMembers, includeProgress }) {
-  const hasClassesTeacherId = await hasColumn('classes', 'teacher_id');
-  const hasClassTeachers = await hasTable('class_teachers');
-  const hasUsersSchoolId = await hasColumn('users', 'school_id');
-  const hasClassesSchoolId = await hasColumn('classes', 'school_id');
-  const hasClassMembers = await hasTable('class_members');
-  const hasProgress = await hasTable('progress');
-
-  if (
-    !hasClassesTeacherId &&
-    !hasClassTeachers &&
-    !(hasUsersSchoolId && hasClassesSchoolId)
-  ) {
-    return {
-      available: false,
-      query: null,
-      params: []
-    };
-  }
-
-  const studentJoin = includeMembers && hasClassMembers
-    ? `LEFT JOIN class_members cm ON cm.class_id = c.id`
-    : '';
-
-  const progressJoin =
-    includeProgress && hasClassMembers && hasProgress
-      ? `LEFT JOIN progress p ON p.user_id = cm.user_id`
-      : '';
-
-  const studentsSelect =
-    includeMembers && hasClassMembers
-      ? `COUNT(DISTINCT cm.user_id)::int AS students`
-      : `0::int AS students`;
-
-  const progressSelect =
-    includeProgress && hasClassMembers && hasProgress
-      ? `COALESCE(ROUND(AVG(p.completion_percent)::numeric, 0), 0)::int AS progress`
-      : `0::int AS progress`;
-
-  if (hasClassesTeacherId) {
-    return {
-      available: true,
-      query: `
-        SELECT
-          c.id,
-          c.name,
-          ${studentsSelect},
-          ${progressSelect}
-        FROM classes c
-        ${studentJoin}
-        ${progressJoin}
-        WHERE c.teacher_id = $1
-        GROUP BY c.id, c.name
-        ORDER BY c.id
-        LIMIT 50
-      `,
-      params: [teacherId]
-    };
-  }
-
-  if (hasClassTeachers) {
-    return {
-      available: true,
-      query: `
-        SELECT
-          c.id,
-          c.name,
-          ${studentsSelect},
-          ${progressSelect}
-        FROM classes c
-        INNER JOIN class_teachers ct ON ct.class_id = c.id
-        ${studentJoin}
-        ${progressJoin}
-        WHERE ct.teacher_id = $1
-        GROUP BY c.id, c.name
-        ORDER BY c.id
-        LIMIT 50
-      `,
-      params: [teacherId]
-    };
-  }
-
-  // Current database fallback: teacher and classes share school_id.
-  return {
-    available: true,
-    query: `
-      SELECT
-        c.id,
-        c.name,
-        ${studentsSelect},
-        ${progressSelect}
-      FROM classes c
-      INNER JOIN users teacher_user
-        ON teacher_user.id = $1
-      ${studentJoin}
-      ${progressJoin}
-      WHERE c.school_id = teacher_user.school_id
-      GROUP BY c.id, c.name
-      ORDER BY c.id
-      LIMIT 50
-    `,
-    params: [teacherId]
-  };
-}
-
-async function getTeacherClassBaseCTE(teacherId) {
-  const hasClassesTeacherId = await hasColumn('classes', 'teacher_id');
-  const hasClassTeachers = await hasTable('class_teachers');
-  const hasUsersSchoolId = await hasColumn('users', 'school_id');
-  const hasClassesSchoolId = await hasColumn('classes', 'school_id');
-
-  if (hasClassesTeacherId) {
-    return {
-      available: true,
-      cte: `
-        WITH teacher_classes AS (
-          SELECT c.id, c.name
-          FROM classes c
-          WHERE c.teacher_id = $1
-        )
-      `,
-      params: [teacherId]
-    };
-  }
-
-  if (hasClassTeachers) {
-    return {
-      available: true,
-      cte: `
-        WITH teacher_classes AS (
-          SELECT DISTINCT c.id, c.name
-          FROM classes c
-          INNER JOIN class_teachers ct ON ct.class_id = c.id
-          WHERE ct.teacher_id = $1
-        )
-      `,
-      params: [teacherId]
-    };
-  }
-
-  if (hasUsersSchoolId && hasClassesSchoolId) {
-    return {
-      available: true,
-      cte: `
-        WITH teacher_classes AS (
-          SELECT DISTINCT c.id, c.name
-          FROM classes c
-          INNER JOIN users teacher_user
-            ON teacher_user.id = $1
-          WHERE c.school_id = teacher_user.school_id
-        )
-      `,
-      params: [teacherId]
-    };
-  }
-
-  return {
-    available: false,
-    cte: '',
-    params: []
-  };
-}
-
-function numberOrZero(value) {
+const clampPercent = (value) => {
   const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : 0;
-}
+  return Number.isFinite(numeric)
+    ? Math.max(0, Math.min(100, Math.round(numeric)))
+    : 0;
+};
 
-function activityLabel(activityType, studentName, className) {
-  const type = String(activityType || '').toLowerCase();
+const activityTime = (value) => {
+  if (!value) return 'Recently';
 
-  if (type.includes('lesson') || type.includes('complete')) {
-    return `${studentName || 'A student'} completed a learning activity${className ? ` in ${className}` : ''}`;
-  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Recently';
 
-  if (type.includes('quiz')) {
-    return `${studentName || 'A student'} completed a quiz${className ? ` in ${className}` : ''}`;
-  }
+  const elapsedMinutes = Math.floor((Date.now() - date.getTime()) / 60000);
+  if (elapsedMinutes < 1) return 'Just now';
+  if (elapsedMinutes < 60) return `${elapsedMinutes} min ago`;
 
-  if (type.includes('scenario')) {
-    return `${studentName || 'A student'} completed a scenario${className ? ` in ${className}` : ''}`;
-  }
+  const hours = Math.floor(elapsedMinutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
 
-  return `${studentName || 'A student'} had recent learning activity${className ? ` in ${className}` : ''}`;
-}
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
+  return date.toLocaleDateString();
+};
 
 const getTeacherDashboard = async (req, res) => {
   try {
     const teacherId = Number(req.user.id);
 
+    if (!Number.isInteger(teacherId) || teacherId <= 0) {
+      return res.status(401).json({ message: 'Invalid teacher session.' });
+    }
+
     const userResult = await pool.query(
       `
-        SELECT
-          id,
-          role,
-          full_name,
-          username,
-          email
+        SELECT id, role, full_name, username, email
         FROM users
         WHERE id = $1
         LIMIT 1
       `,
       [teacherId]
     );
-
     const user = userResult.rows[0];
 
     if (!user) {
-      return res.status(404).json({
-        message: 'Teacher account not found.'
+      return res.status(404).json({ message: 'Teacher account not found.' });
+    }
+
+    // School membership does not grant access to every school class. Teachers
+    // may see only classes where they have an explicit teacher membership.
+    const classResult = await pool.query(
+      `
+        WITH teacher_classes AS (
+          SELECT DISTINCT class_id
+          FROM class_memberships
+          WHERE user_id = $1
+            AND membership_role = 'teacher'
+        )
+        SELECT
+          c.id,
+          c.name,
+          c.is_active,
+          COUNT(DISTINCT student_membership.user_id)::int AS students,
+          COALESCE(ROUND(AVG(student_progress.overall_progress), 0), 0)::int AS progress
+        FROM teacher_classes tc
+        JOIN classes c ON c.id = tc.class_id
+        LEFT JOIN class_memberships student_membership
+          ON student_membership.class_id = c.id
+         AND student_membership.membership_role = 'student'
+        LEFT JOIN student_progress
+          ON student_progress.student_id = student_membership.user_id
+        GROUP BY c.id, c.name, c.is_active
+        ORDER BY c.name ASC
+      `,
+      [teacherId]
+    );
+
+    const classes = classResult.rows.map((row) => ({
+      id: Number(row.id),
+      name: row.name,
+      students: Number(row.students || 0),
+      progress: clampPercent(row.progress),
+      status: row.is_active === false ? 'Archived' : 'Active'
+    }));
+    const classIds = classes.map((item) => item.id);
+
+    if (!classIds.length) {
+      return res.json({
+        user: {
+          id: Number(user.id), role: user.role, fullName: user.full_name,
+          username: user.username, email: user.email
+        },
+        stats: { classes: 0, totalStudents: 0, assignedContent: 0, averageCompletion: 0 },
+        classes: [],
+        progress: { lessons: 0, quizzes: 0, scenarios: 0, goals: 0 },
+        recentActivity: []
       });
     }
 
-    const classesMeta = await getTeacherClassQuery(teacherId, {
-      includeMembers: true,
-      includeProgress: true
-    });
-
-    let classes = [];
-    let classIds = [];
-
-    if (classesMeta.available) {
-      const result = await pool.query(classesMeta.query, classesMeta.params);
-
-      classes = result.rows.map((row) => ({
-        id: Number(row.id),
-        name: row.name,
-        students: Number(row.students || 0),
-        progress: numberOrZero(row.progress)
-      }));
-
-      classIds = classes.map((item) => item.id);
-    }
-
-    const classMembersExists = await hasTable('class_members');
-    const progressExists = await hasTable('progress');
-
-    let totalStudents = 0;
-    let averageCompletion = 0;
-    let breakdown = {
-      lessons: 0,
-      quizzes: 0,
-      scenarios: 0,
-      goals: 0
-    };
-
-    if (classesMeta.available && classMembersExists) {
-      const base = await getTeacherClassBaseCTE(teacherId);
-
-      if (base.available) {
-        const totalStudentsResult = await pool.query(
-          `
-            ${base.cte}
-            SELECT COUNT(DISTINCT cm.user_id)::int AS total_students
-            FROM class_members cm
-            INNER JOIN teacher_classes tc ON tc.id = cm.class_id
-          `,
-          base.params
-        );
-
-        totalStudents = Number(totalStudentsResult.rows[0]?.total_students || 0);
-
-        if (progressExists) {
-          const progressResult = await pool.query(
-            `
-              ${base.cte}
-              SELECT
-                COALESCE(ROUND(AVG(p.completion_percent)::numeric, 0), 0)::int AS average_completion
-              FROM progress p
-              INNER JOIN class_members cm ON cm.user_id = p.user_id
-              INNER JOIN teacher_classes tc ON tc.id = cm.class_id
-            `,
-            base.params
-          );
-
-          averageCompletion = Number(
-            progressResult.rows[0]?.average_completion || 0
-          );
-        }
-      }
-    }
-
-    const contentItemsExists = await hasTable('content_items');
-
-    if (classesMeta.available && classMembersExists && progressExists && contentItemsExists) {
-      const base = await getTeacherClassBaseCTE(teacherId);
-
-      if (base.available) {
-        const breakdownResult = await pool.query(
-          `
-            ${base.cte}
-            SELECT
-              LOWER(COALESCE(ci.content_type, '')) AS content_type,
-              COALESCE(ROUND(AVG(p.completion_percent)::numeric, 0), 0)::int AS average_progress
-            FROM progress p
-            INNER JOIN class_members cm ON cm.user_id = p.user_id
-            INNER JOIN teacher_classes tc ON tc.id = cm.class_id
-            INNER JOIN content_items ci ON ci.id = p.content_item_id
-            GROUP BY LOWER(COALESCE(ci.content_type, ''))
-          `,
-          base.params
-        );
-
-        for (const row of breakdownResult.rows) {
-          const type = String(row.content_type || '').toLowerCase();
-          const value = Number(row.average_progress || 0);
-
-          if (type.includes('lesson')) breakdown.lessons = value;
-          else if (type.includes('quiz')) breakdown.quizzes = value;
-          else if (type.includes('scenario')) breakdown.scenarios = value;
-        }
-      }
-    }
-
-    const goalsExists = await hasTable('goals');
-
-    if (goalsExists && classesMeta.available && classMembersExists) {
-      const base = await getTeacherClassBaseCTE(teacherId);
-
-      if (base.available) {
-        const goalsResult = await pool.query(
-          `
-            ${base.cte}
-            SELECT
-              COALESCE(
-                ROUND(
-                  AVG(
-                    CASE
-                      WHEN COALESCE(g.target_value, 0) > 0
-                        THEN LEAST((COALESCE(g.current_value, 0) / g.target_value) * 100, 100)
-                      ELSE 0
-                    END
-                  )::numeric,
-                  0
-                ),
-                0
-              )::int AS goal_progress
-            FROM goals g
-            INNER JOIN class_members cm ON cm.user_id = g.user_id
-            INNER JOIN teacher_classes tc ON tc.id = cm.class_id
-          `,
-          base.params
-        );
-
-        breakdown.goals = Number(goalsResult.rows[0]?.goal_progress || 0);
-      }
-    }
-
-    const assignmentsExists = await hasTable('assignments');
-    const assignmentItemsExists = await hasTable('assignment_items');
-    let assignedContent = 0;
-
-    if (assignmentsExists) {
-      if (assignmentItemsExists) {
-        const assignedResult = await pool.query(
-          `
-            SELECT COUNT(DISTINCT ai.content_item_id)::int AS assigned_content
-            FROM assignment_items ai
-            INNER JOIN assignments a ON a.id = ai.assignment_id
-            WHERE a.teacher_id = $1
-          `,
-          [teacherId]
-        );
-
-        assignedContent = Number(
-          assignedResult.rows[0]?.assigned_content || 0
-        );
-      } else {
-        const assignedResult = await pool.query(
-          `
-            SELECT COUNT(*)::int AS assigned_content
-            FROM assignments
-            WHERE teacher_id = $1
-          `,
-          [teacherId]
-        );
-
-        assignedContent = Number(
-          assignedResult.rows[0]?.assigned_content || 0
-        );
-      }
-    }
-
-    let recentActivity = [];
-
-    const studentActivityExists = await hasTable('student_activity');
-    const usersExists = await hasTable('users');
-
-    if (
-      studentActivityExists &&
-      classMembersExists &&
-      usersExists &&
-      classesMeta.available
-    ) {
-      const base = await getTeacherClassBaseCTE(teacherId);
-
-      if (base.available) {
-        const activityResult = await pool.query(
-          `
-            ${base.cte}
-            SELECT
-              sa.activity_type,
-              sa.created_at,
-              u.full_name,
-              tc.name AS class_name
-            FROM student_activity sa
-            INNER JOIN class_members cm ON cm.user_id = sa.user_id
-            INNER JOIN teacher_classes tc ON tc.id = cm.class_id
-            INNER JOIN users u ON u.id = sa.user_id
-            ORDER BY sa.created_at DESC
-            LIMIT 4
-          `,
-          base.params
-        );
-
-        recentActivity = activityResult.rows.map((row) => ({
-          type: String(row.activity_type || 'activity'),
-          text: activityLabel(row.activity_type, row.full_name, row.class_name),
-          time: row.created_at
-            ? new Date(row.created_at).toLocaleString()
-            : ''
-        }));
-      }
-    }
-
-    if (recentActivity.length === 0 && assignmentsExists) {
-      const assignmentsResult = await pool.query(
+    const [summaryResult, assignmentResult, activityResult] = await Promise.all([
+      pool.query(
         `
+          WITH students AS (
+            SELECT DISTINCT user_id AS student_id
+            FROM class_memberships
+            WHERE class_id = ANY($1::bigint[])
+              AND membership_role = 'student'
+          ),
+          totals AS (
+            SELECT
+              (SELECT COUNT(*)::numeric FROM lessons WHERE is_published = TRUE) AS lessons,
+              (SELECT COUNT(*)::numeric FROM quizzes WHERE is_published = TRUE) AS quizzes,
+              (SELECT COUNT(*)::numeric FROM scenarios WHERE is_published = TRUE) AS scenarios
+          ),
+          per_student AS (
+            SELECT
+              students.student_id,
+              CASE WHEN totals.lessons = 0 THEN 0 ELSE (
+                SELECT COUNT(*)::numeric
+                FROM lesson_progress lp
+                JOIN lessons l ON l.id = lp.lesson_id AND l.is_published = TRUE
+                WHERE lp.student_id = students.student_id AND lp.status = 'completed'
+              ) / totals.lessons * 100 END AS lesson_progress,
+              CASE WHEN totals.quizzes = 0 THEN 0 ELSE (
+                SELECT COUNT(DISTINCT qa.quiz_id)::numeric
+                FROM quiz_attempts qa
+                JOIN quizzes q ON q.id = qa.quiz_id AND q.is_published = TRUE
+                WHERE qa.student_id = students.student_id AND qa.completed_at IS NOT NULL
+              ) / totals.quizzes * 100 END AS quiz_progress,
+              CASE WHEN totals.scenarios = 0 THEN 0 ELSE (
+                SELECT COUNT(DISTINCT sa.scenario_id)::numeric
+                FROM scenario_attempts sa
+                JOIN scenarios s ON s.id = sa.scenario_id AND s.is_published = TRUE
+                WHERE sa.student_id = students.student_id AND sa.completed = TRUE
+              ) / totals.scenarios * 100 END AS scenario_progress,
+              COALESCE((
+                SELECT AVG(CASE WHEN g.target_amount > 0
+                  THEN LEAST((g.current_amount / g.target_amount) * 100, 100)
+                  ELSE 0 END)
+                FROM goals g
+                WHERE g.student_id = students.student_id AND g.status = 'active'
+              ), 0) AS goal_progress
+            FROM students
+            CROSS JOIN totals
+          )
           SELECT
-            a.title,
-            a.created_at,
-            c.name AS class_name
-          FROM assignments a
-          INNER JOIN classes c ON c.id = a.class_id
-          WHERE a.teacher_id = $1
-          ORDER BY a.created_at DESC
+            COUNT(*)::int AS total_students,
+            COALESCE(ROUND(AVG(lesson_progress), 0), 0)::int AS lessons,
+            COALESCE(ROUND(AVG(quiz_progress), 0), 0)::int AS quizzes,
+            COALESCE(ROUND(AVG(scenario_progress), 0), 0)::int AS scenarios,
+            COALESCE(ROUND(AVG(goal_progress), 0), 0)::int AS goals,
+            COALESCE(ROUND(AVG((lesson_progress + quiz_progress + scenario_progress) / 3), 0), 0)::int AS average_completion
+          FROM per_student
+        `,
+        [classIds]
+      ),
+      pool.query(
+        `
+          SELECT COUNT(DISTINCT CONCAT_WS(':', lesson_id, quiz_id, scenario_id))::int AS count
+          FROM teacher_assignments
+          WHERE teacher_id = $1 AND class_id = ANY($2::bigint[])
+        `,
+        [teacherId, classIds]
+      ),
+      pool.query(
+        `
+          WITH students AS (
+            SELECT DISTINCT user_id
+            FROM class_memberships
+            WHERE class_id = ANY($1::bigint[]) AND membership_role = 'student'
+          ), activity AS (
+            SELECT 'lesson' AS type, lp.completed_at AS occurred_at, u.full_name, l.title AS content_title, NULL::text AS class_name
+            FROM lesson_progress lp
+            JOIN students st ON st.user_id = lp.student_id
+            JOIN users u ON u.id = lp.student_id
+            JOIN lessons l ON l.id = lp.lesson_id
+            WHERE lp.status = 'completed' AND lp.completed_at IS NOT NULL
+            UNION ALL
+            SELECT 'quiz', qa.completed_at, u.full_name, q.title, NULL::text
+            FROM quiz_attempts qa
+            JOIN students st ON st.user_id = qa.student_id
+            JOIN users u ON u.id = qa.student_id
+            JOIN quizzes q ON q.id = qa.quiz_id
+            WHERE qa.completed_at IS NOT NULL
+            UNION ALL
+            SELECT 'scenario', sa.completed_at, u.full_name, s.title, NULL::text
+            FROM scenario_attempts sa
+            JOIN students st ON st.user_id = sa.student_id
+            JOIN users u ON u.id = sa.student_id
+            JOIN scenarios s ON s.id = sa.scenario_id
+            WHERE sa.completed = TRUE AND sa.completed_at IS NOT NULL
+            UNION ALL
+            SELECT 'assignment', ta.assigned_at, NULL::text, COALESCE(l.title, q.title, s.title, 'content'), c.name
+            FROM teacher_assignments ta
+            JOIN classes c ON c.id = ta.class_id
+            LEFT JOIN lessons l ON l.id = ta.lesson_id
+            LEFT JOIN quizzes q ON q.id = ta.quiz_id
+            LEFT JOIN scenarios s ON s.id = ta.scenario_id
+            WHERE ta.teacher_id = $2 AND ta.class_id = ANY($1::bigint[])
+          )
+          SELECT type, occurred_at, full_name, content_title, class_name
+          FROM activity
+          ORDER BY occurred_at DESC
           LIMIT 4
         `,
-        [teacherId]
-      );
+        [classIds, teacherId]
+      )
+    ]);
 
-      recentActivity = assignmentsResult.rows.map((row) => ({
-        type: 'assignment',
-        text: `You assigned "${row.title}"${row.class_name ? ` to ${row.class_name}` : ''}`,
-        time: row.created_at
-          ? new Date(row.created_at).toLocaleString()
-          : ''
-      }));
-    }
+    const summary = summaryResult.rows[0] || {};
+    const progress = {
+      lessons: clampPercent(summary.lessons),
+      quizzes: clampPercent(summary.quizzes),
+      scenarios: clampPercent(summary.scenarios),
+      goals: clampPercent(summary.goals)
+    };
+
+    const recentActivity = activityResult.rows.map((row) => {
+      const student = row.full_name || 'A student';
+      const title = row.content_title || 'learning content';
+      const text = row.type === 'assignment'
+        ? `You assigned "${title}" to ${row.class_name || 'a class'}`
+        : `${student} completed ${row.type === 'lesson' ? 'the lesson' : `the ${row.type}`} "${title}"`;
+
+      return { type: row.type, text, time: activityTime(row.occurred_at) };
+    });
 
     return res.json({
       user: {
-        id: Number(user.id),
-        role: user.role,
-        fullName: user.full_name,
-        username: user.username,
-        email: user.email
+        id: Number(user.id), role: user.role, fullName: user.full_name,
+        username: user.username, email: user.email
       },
       stats: {
         classes: classes.length,
-        totalStudents,
-        assignedContent,
-        averageCompletion
+        totalStudents: Number(summary.total_students || 0),
+        assignedContent: Number(assignmentResult.rows[0]?.count || 0),
+        averageCompletion: clampPercent(summary.average_completion)
       },
       classes,
-      progress: breakdown,
-      recentActivity,
-      classIds
+      progress,
+      recentActivity
     });
   } catch (error) {
     console.error('Teacher dashboard error:', error);
-
-    return res.status(500).json({
-      message: 'Unable to load teacher dashboard.'
-    });
+    return res.status(500).json({ message: 'Unable to load teacher dashboard.' });
   }
 };
 
-module.exports = {
-  getTeacherDashboard
-};
+module.exports = { getTeacherDashboard };

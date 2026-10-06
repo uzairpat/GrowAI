@@ -17,8 +17,13 @@ const {
 
   getScenario,
   saveScenarioAttempt,
-  getLatestScenarioAttempt
+  getLatestScenarioAttempt,
+
+  getStudentGoals,
+  createStudentGoal,
+  updateStudentGoal
 } = require('../controllers/studentController');
+
 
 // All routes below require a logged-in student
 router.use(authenticateUser, requireStudent);
@@ -70,5 +75,28 @@ router.get(
   '/scenarios/:scenarioId/attempts/latest',
   getLatestScenarioAttempt
 );
+
+// ============================================================
+// GOALS
+// ============================================================
+
+// Get logged-in student's goals
+router.get(
+  '/goals',
+  getStudentGoals
+);
+
+// Create a goal
+router.post(
+  '/goals',
+  createStudentGoal
+);
+
+// Update a goal belonging to the logged-in student
+router.put(
+  '/goals/:goalId',
+  updateStudentGoal
+);
+
 
 module.exports = router;

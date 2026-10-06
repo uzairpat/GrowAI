@@ -25,81 +25,55 @@ export default function StudentDashboard() {
 
 
   useEffect(() => {
-    const loadGoalFromStorage = () => {
-      const storedGoals = window.localStorage.getItem('growais_goals');
-
-      if (!storedGoals) {
-        setActiveGoalTitle('No Active Goal');
-        setActiveGoalProgress(0);
-        return;
-      }
-
-      try {
-        const goals = JSON.parse(storedGoals);
-
-        if (!Array.isArray(goals) || goals.length === 0) {
-          setActiveGoalTitle('No Active Goal');
-          setActiveGoalProgress(0);
-          return;
-        }
-
-        const activeGoal =
-          goals.find((goal: { active?: boolean }) => goal.active) || goals[0];
-
-        setActiveGoalTitle(activeGoal?.title || 'No Active Goal');
-
-        let progress = 0;
-
-        if (activeGoal?.type === 'savings') {
-          const target = Number(activeGoal.targetAmount) || 0;
-          const saved = Number(activeGoal.savedAmount) || 0;
-
-          progress =
-            target > 0
-              ? Math.min(Math.round((saved / target) * 100), 100)
-              : 0;
-        } else if (activeGoal?.type === 'completion') {
-          const target = Number(activeGoal.targetActivities) || 0;
-          const completed = Number(activeGoal.completedActivities) || 0;
-
-          progress =
-            target > 0
-              ? Math.min(Math.round((completed / target) * 100), 100)
-              : 0;
-        }
-
-        setActiveGoalProgress(progress);
-      } catch {
-        setActiveGoalTitle('No Active Goal');
-        setActiveGoalProgress(0);
-      }
-    };
-
-    loadGoalFromStorage();
-
-    const handleStorageChange = () => {
-      loadGoalFromStorage();
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-
     const loadUser = async () => {
       try {
         const data = await apiFetch('/api/auth/me');
-    
+
         if (data.user.role !== 'student') {
           window.location.href = '/login';
           return;
         }
-    
+
         setUser(data.user);
-    
+
+        // Load this student's active Goal from PostgreSQL.
+        try {
+          const goalsResult = await apiFetch('/api/student/goals');
+          const goals = Array.isArray(goalsResult.goals)
+            ? goalsResult.goals
+            : [];
+
+          const activeGoal =
+            goals.find((goal: { status?: string }) => goal.status === 'active') ||
+            goals[0];
+
+          if (activeGoal) {
+            const target = Number(activeGoal.target_amount) || 0;
+            const current = Number(activeGoal.current_amount) || 0;
+
+            const progress =
+              target > 0
+                ? Math.min(Math.round((current / target) * 100), 100)
+                : 0;
+
+            setActiveGoalTitle(activeGoal.title || 'No Active Goal');
+            setActiveGoalProgress(progress);
+          } else {
+            setActiveGoalTitle('No Active Goal');
+            setActiveGoalProgress(0);
+          }
+        } catch (error) {
+          console.error('Unable to load goal progress:', error);
+          setActiveGoalTitle('No Active Goal');
+          setActiveGoalProgress(0);
+        }
+
         // Load this student's Budgeting Basics progress
         try {
           const lessonProgress = await apiFetch(
             '/api/student/lessons/2/progress'
           );
-    
+
           setLessonCompleted(
             lessonProgress.progress?.status === 'completed'
           );
@@ -120,7 +94,7 @@ export default function StudentDashboard() {
           console.error('Unable to load quiz progress:', error);
           setQuizCompleted(false);
         }
-        
+
         // Load this student's latest Scenario 1 attempt from PostgreSQL.
         try {
           const scenarioResult = await apiFetch(
@@ -145,7 +119,6 @@ export default function StudentDashboard() {
           setScenarioPoints(0);
           setScenarioBadgeEarned(false);
         }
-    
       } catch {
         window.location.href = '/login';
       } finally {
@@ -154,10 +127,6 @@ export default function StudentDashboard() {
     };
 
     loadUser();
-
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-    };
   }, []);
 
   if (loading) {

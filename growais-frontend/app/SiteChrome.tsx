@@ -11,8 +11,8 @@ export default function SiteChrome({
 }) {
   const pathname = usePathname();
 
-  // Student pages have their own complete layout.
-  if (pathname.startsWith('/student')) {
+  // Student and teacher portals provide complete application shells.
+  if (pathname.startsWith('/student') || pathname.startsWith('/teacher')) {
     return <>{children}</>;
   }
 

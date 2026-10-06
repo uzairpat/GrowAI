@@ -40,53 +40,6 @@ export default function ProgressPage() {
   const [goalTitle, setGoalTitle] = useState("No Active Goal");
 
   useEffect(() => {
-    const loadProgress = () => {
-      let activeGoalProgress = 0;
-      let activeGoalTitle = "No Active Goal";
-      const storedGoals = window.localStorage.getItem("growais_goals");
-
-      if (storedGoals) {
-        try {
-          const goals = JSON.parse(storedGoals);
-
-          if (Array.isArray(goals) && goals.length > 0) {
-            const activeGoal =
-              goals.find((goal: Goal) => goal.active) || goals[0];
-
-            activeGoalTitle = activeGoal?.title || "No Active Goal";
-
-            if (activeGoal?.type === "savings") {
-              const target = Number(activeGoal.targetAmount) || 0;
-              const saved = Number(activeGoal.savedAmount) || 0;
-
-              activeGoalProgress =
-                target > 0
-                  ? Math.min(Math.round((saved / target) * 100), 100)
-                  : 0;
-            } else if (activeGoal?.type === "completion") {
-              const target = Number(activeGoal.targetActivities) || 0;
-              const completed = Number(activeGoal.completedActivities) || 0;
-
-              activeGoalProgress =
-                target > 0
-                  ? Math.min(Math.round((completed / target) * 100), 100)
-                  : 0;
-            }
-          }
-        } catch {
-          activeGoalProgress = 0;
-          activeGoalTitle = "No Active Goal";
-        }
-      }
-
-      // Scenario completion/score are loaded from PostgreSQL below.
-      setScenarioCompleted(false);
-      setScenarioPoints(0);
-      setScenarioBadgeEarned(false);
-      setGoalProgress(activeGoalProgress);
-      setGoalTitle(activeGoalTitle);
-    };
-
     const loadUser = async () => {
       try {
         const data = await apiFetch("/api/auth/me");
@@ -97,6 +50,55 @@ export default function ProgressPage() {
         }
 
         setUser(data.user);
+
+        // Load this student's active Goal from PostgreSQL.
+        try {
+          const goalsResult = await apiFetch(
+            "/api/student/goals"
+          );
+
+          const goals = Array.isArray(goalsResult.goals)
+            ? goalsResult.goals
+            : [];
+
+          const activeGoal =
+            goals.find(
+              (goal: { status?: string }) =>
+                goal.status === "active"
+            ) || goals[0];
+
+          if (activeGoal) {
+            const target = Number(
+              activeGoal.target_amount
+            ) || 0;
+            const current = Number(
+              activeGoal.current_amount
+            ) || 0;
+
+            const progress =
+              target > 0
+                ? Math.min(
+                    Math.round((current / target) * 100),
+                    100
+                  )
+                : 0;
+
+            setGoalTitle(
+              activeGoal.title || "No Active Goal"
+            );
+            setGoalProgress(progress);
+          } else {
+            setGoalTitle("No Active Goal");
+            setGoalProgress(0);
+          }
+        } catch (error) {
+          console.error(
+            "Unable to load goal progress:",
+            error
+          );
+          setGoalTitle("No Active Goal");
+          setGoalProgress(0);
+        }
 
         // Lesson progress is student-specific and comes from PostgreSQL.
         try {
@@ -133,6 +135,7 @@ export default function ProgressPage() {
           setQuizCompleted(false);
           setQuizScore(0);
         }
+
         // Scenario progress and score come from PostgreSQL for the
         // logged-in student's latest Scenario 1 attempt.
         try {
@@ -174,18 +177,7 @@ export default function ProgressPage() {
       }
     };
 
-    loadProgress();
     loadUser();
-
-    const handleStorageChange = () => {
-      loadProgress();
-    };
-
-    window.addEventListener("storage", handleStorageChange);
-
-    return () => {
-      window.removeEventListener("storage", handleStorageChange);
-    };
   }, []);
 
   const lessonProgress = lessonCompleted ? 100 : 0;

@@ -147,7 +147,7 @@ export default function TeacherDashboardPage() {
 
     <section className="teacher-grid-2">
       <TeacherSectionCard title="My Classes" icon="classes" action={<Link href="/teacher/classes" className="teacher-card-link">View All →</Link>}>
-        <div style={{overflowX:"auto"}}><table className="teacher-class-table"><thead><tr><th>Class Name</th><th>Students</th><th>Progress</th><th>Actions</th></tr></thead><tbody>{classes.map((item)=><tr key={item.name}><td>{item.name}</td><td>{item.students}</td><td><div className="teacher-progress-cell"><span>{item.progress}%</span><TeacherProgressBar value={item.progress} tone={item.tone}/></div></td><td><Link href={`/teacher/classes/${item.name.replace(/\s+/g,"-").toLowerCase()}`} className="teacher-view-btn">View</Link></td></tr>)}</tbody></table></div>
+        <div style={{overflowX:"auto"}}><table className="teacher-class-table"><thead><tr><th>Class Name</th><th>Students</th><th>Progress</th><th>Actions</th></tr></thead><tbody>{classes.map((item)=><tr key={item.id}><td>{item.name}</td><td>{item.students}</td><td><div className="teacher-progress-cell"><span>{item.progress}%</span><TeacherProgressBar value={item.progress} tone={item.tone}/></div></td><td><Link href={`/teacher/classes/${item.id}`} className="teacher-view-btn">View</Link></td></tr>)}</tbody></table></div>
       </TeacherSectionCard>
 
       <TeacherSectionCard title="Overall Student Progress" icon="progress" action={<Link href="/teacher/progress" className="teacher-card-link">View Details →</Link>}>
